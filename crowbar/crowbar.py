@@ -1,5 +1,4 @@
 import argparse
-import functools
 import json
 import re
 import operator
@@ -14,7 +13,6 @@ from concurrent.futures import ProcessPoolExecutor
 import pandas as pd
 import numpy as np
 from Bio import SeqIO
-from Bio.Blast.Applications import NcbiblastnCommandline
 
 # Complex type constants
 TRIPLET_COUNTS = Dict[int, Dict[int, Dict[int, int]]]
@@ -43,7 +41,7 @@ def arguments():
 def row_distance(idx: int, row: Tuple[str, pd.Series],
                  calls: pd.DataFrame) -> Dict[int, int]:
 
-    name, strain1 = row
+    _, strain1 = row
 
     return {j: sum(strain1 != calls.iloc[j])
             for j in range(idx + 1, len(calls))}
@@ -69,6 +67,7 @@ def dist_gene(calls: pd.DataFrame, cores: int) -> np.matrix:
 
     return dist_mat
 
+
 def closest_relatives(query: str, genomes: Sequence[str],
                       distances: np.matrix) -> Set[int]:
 
@@ -93,6 +92,7 @@ def closest_relatives(query: str, genomes: Sequence[str],
 
     return closest
 
+
 def closest_relative_allele(query: str, missing: str, calls: pd.DataFrame,
                             distances: np.matrix) -> List[int]:
 
@@ -104,9 +104,11 @@ def closest_relative_allele(query: str, missing: str, calls: pd.DataFrame,
 
     return closest_relative_alleles
 
+
 def exclude_matches(include: Set[int], matches: Sequence[int]) -> List[int]:
 
     return [match for match in matches if match in include]
+
 
 def order_on_reference(reference: Path, genes: Path,
                        calls: pd.DataFrame) -> pd.DataFrame:
@@ -118,6 +120,8 @@ def order_on_reference(reference: Path, genes: Path,
         gene_name = gene.stem
 
         with gene.open('r') as fasta:
+
+            # Use just the first record
             rec = next(SeqIO.parse(fasta, 'fasta'))
 
             query = str(rec.seq)
@@ -146,7 +150,7 @@ def find_locus_location(query: str, subject: Path) -> int:
 
     # best row should be first
     # sstart, ssend = 8, 9
-    start, stop = table_result.iloc[0, [8,9]]
+    start, stop = table_result.iloc[0, [8, 9]]
 
     return min(start, stop)
 
@@ -163,7 +167,7 @@ def count_triplets(gene: str, calls: pd.DataFrame) -> TRIPLET_COUNTS:
 
     triplets = tree()
 
-    for idx, row in triplet_calls.iterrows():
+    for _, row in triplet_calls.iterrows():
 
         left, centre, right = row
 
@@ -176,11 +180,12 @@ def count_triplets(gene: str, calls: pd.DataFrame) -> TRIPLET_COUNTS:
     # Convert back to standard dict to avoid any weirdness later
     return json.loads(json.dumps(triplets))
 
+
 def fragment_match(gene: str, fragment: str, genes: Path) -> Set[int]:
 
     fragment_pattern = re.compile('^{seq}|{seq}$'.format(seq=fragment))
 
-    glob_pattern = '*{}*.f'.format(gene)
+    glob_pattern = '*{}.f*'.format(gene)
     gene_file, *_ = genes.glob(glob_pattern)
 
     with gene_file.open('r') as fasta:
@@ -189,6 +194,55 @@ def fragment_match(gene: str, fragment: str, genes: Path) -> Set[int]:
                      if re.search(fragment_pattern, rec.seq))
 
     return result
+
+def load_fragment(gene: str, strain: str, test_name: str, jsondir: Path) -> str:
+    # Currently, totally MIST-based
+
+    jsonpath = (jsondir / strain).with_suffix('.json')
+
+    with jsonpath.open('r') as json_obj:
+        data = json.load(json_obj)
+
+    test_data = data['Results'][0]['TestResults'][test_name]
+
+    fragment = test_data['Amplicon']
+
+    return fragment
+
+
+def linkage_disequilibrium(gene: str, strain: str, reference: Path,
+                           genes: Path, calls: pd.DataFrame) -> Dict[int, int]:
+
+    ordered_calls = order_on_reference(reference, genes, calls)
+    gene_names = ordered_calls.columns
+
+    triplets = count_triplets(gene, ordered_calls)
+
+    left_col = gene_names[gene_names.index(gene) - 1]
+    right_col = gene_names[gene_names.index(gene) + 1]
+
+    left, right = ordered_calls[[left_col, right_col]].loc[strain]
+
+    return triplets[left][right]
+
+
+def nearest_neighbour(gene: str, strain: str, included_fragments: Set[int],
+                      distances: np.matrix, calls: pd.DataFrame) -> List[int]:
+
+    closest_alleles = closest_relative_allele(strain, gene, calls, distances)
+
+    filtered_matches = exclude_matches(included_fragments, closest_alleles)
+
+    return filtered_matches
+
+def partial_sequence_match(gene: str, strain: str, test_name: str, genes: Path,
+                           jsondir: Path, calls: pd.DataFrame) -> Set[int]:
+
+    fragment = load_fragment(gene, strain, test_name, jsondir)
+
+    matches = fragment_match(gene, fragment, genes)
+
+    return matches
 
 def main():
 
