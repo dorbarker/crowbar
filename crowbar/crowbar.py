@@ -93,14 +93,14 @@ def closest_relatives(query: str, genomes: Sequence[str],
     return closest
 
 
-def closest_relative_allele(query: str, missing: str, calls: pd.DataFrame,
+def closest_relative_allele(strain: str, gene: str, calls: pd.DataFrame,
                             distances: np.matrix) -> List[int]:
 
     genomes = calls.index
 
-    closest_relative_indices = closest_relatives(query, genomes, distances)
+    closest_relative_indices = closest_relatives(strain, genomes, distances)
 
-    closest_relative_alleles = calls[missing].iloc[closest_relative_indices]
+    closest_relative_alleles = calls[gene].iloc[closest_relative_indices]
 
     return closest_relative_alleles
 
@@ -168,6 +168,10 @@ def count_triplets(gene: str, calls: pd.DataFrame) -> TRIPLET_COUNTS:
     triplets = tree()
 
     for _, row in triplet_calls.iterrows():
+
+        if -1 in row or 0 in row:
+            continue
+
 
         left, centre, right = row
 
@@ -240,6 +244,7 @@ def nearest_neighbour(gene: str, strain: str, included_fragments: Set[int],
 
     return filtered_matches
 
+
 def partial_sequence_match(gene: str, strain: str, genes: Path,
                            jsondir: Path, calls: pd.DataFrame) -> Set[int]:
 
@@ -248,6 +253,7 @@ def partial_sequence_match(gene: str, strain: str, genes: Path,
     matches = fragment_match(gene, fragment, genes)
 
     return matches
+
 
 def main():
 

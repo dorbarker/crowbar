@@ -10,10 +10,13 @@ import crowbar  # main script
 # regular imports
 import argparse
 import random
+from itertools import chain
 from pathlib import Path
 from typing import Dict, Tuple
 # 3rd Party imports
 import pandas as pd
+
+
 def arguments():
 
     parser = argparse.ArgumentParser()
@@ -63,7 +66,9 @@ def introduce_random_errors(trunc_prob: float, miss_prob: float,
         truncations = {gene: truncate(strain, gene, jsondir)
                        for gene in row[to_truncate].index}
 
-    return calls, truncations
+    return calls, truncation
+
+
 def truncate(strain: str, gene: str, jsondir: Path):
 
     sequence = crowbar.load_fragment(strain, gene, jsondir)
@@ -76,12 +81,46 @@ def truncate(strain: str, gene: str, jsondir: Path):
 
     return halves[side]
 
-def vanish(strain: str, gene: str):
-    pass
+
+def recover(truncations: Dict[str, str], distances: np.matrix, calls: pd.DataFrame, genes: Path):
+
+    gene_names = calls.columns
+
+    for strain, row in calls.iterrows():
+
+        # treat truncated and missing differently,
+        # as missing loci have no fragment to use
+        truncated_genes = row[row == -1].index
+        missing_genes = row[row == 0].index
+
+        for gene in chain(truncated_genes, missing_genes):
+
+
+            ### Fragment matching
+            if gene in truncated_genes:
+
+                matching_fragments = crowbar.fragment_match(gene,
+                                                            truncations[gene],
+                                                            genes)
+
+            ### Nearest Neighbour
+            closest_alleles = crowbar.closest_relative_allele(strain, gene,
+                                                              calls, distances)
+
+
+            ### Linkage disequilibrium
+            triplets = count_triplets(gene, calls)
+            left_col = gene_names[gene_names.index(gene) - 1]
+            right_col = gene_names[gene_names.index(gene) + 1]
+
+            left, right = calls[[left_col, right_col]].loc[strain]
+            linked = triplets[left][right]
+
 
 def main():
 
     args = arguments()
+
 
 if __name__ == '__main__':
     main()
