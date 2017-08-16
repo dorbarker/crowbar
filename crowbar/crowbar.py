@@ -195,7 +195,7 @@ def fragment_match(gene: str, fragment: str, genes: Path) -> Set[int]:
 
     return result
 
-def load_fragment(gene: str, strain: str, test_name: str, jsondir: Path) -> str:
+def load_fragment(strain: str, gene: str, jsondir: Path) -> str:
     # Currently, totally MIST-based
 
     jsonpath = (jsondir / strain).with_suffix('.json')
@@ -203,7 +203,12 @@ def load_fragment(gene: str, strain: str, test_name: str, jsondir: Path) -> str:
     with jsonpath.open('r') as json_obj:
         data = json.load(json_obj)
 
-    test_data = data['Results'][0]['TestResults'][test_name]
+    test_results = data['Results'][0]['TestResults']
+
+    # presumed to be a single test name per file
+    test_name, *_ = test_results.keys()
+
+    test_data = test_results[test_name]
 
     fragment = test_data['Amplicon']
 
@@ -235,10 +240,10 @@ def nearest_neighbour(gene: str, strain: str, included_fragments: Set[int],
 
     return filtered_matches
 
-def partial_sequence_match(gene: str, strain: str, test_name: str, genes: Path,
+def partial_sequence_match(gene: str, strain: str, genes: Path,
                            jsondir: Path, calls: pd.DataFrame) -> Set[int]:
 
-    fragment = load_fragment(gene, strain, test_name, jsondir)
+    fragment = load_fragment(gene, strain, jsondir)
 
     matches = fragment_match(gene, fragment, genes)
 
