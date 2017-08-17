@@ -41,10 +41,16 @@ def arguments():
 def row_distance(idx: int, row: Tuple[str, pd.Series],
                  calls: pd.DataFrame) -> Dict[int, int]:
 
-    _, strain1 = row
+    def non_missing_hamming(j):
 
-    return {j: sum(strain1 != calls.iloc[j])
-            for j in range(idx + 1, len(calls))}
+        strain1 = row[1]
+        strain2 = calls.iloc[j]
+
+        shared = [a and b for a, b in zip(strain1 > 0, strain2 > 0)]
+
+        return sum(strain1[shared] != strain2[shared]
+
+    return {j: non_missing_hamming(j) for j in range(idx + 1, len(calls))}
 
 
 def dist_gene(calls: pd.DataFrame, cores: int) -> np.matrix:
@@ -103,6 +109,13 @@ def closest_relative_allele(strain: str, gene: str, calls: pd.DataFrame,
     closest_relative_alleles = calls[gene].iloc[closest_relative_indices]
 
     return closest_relative_alleles
+
+
+def percent_shared(strain1, strain2):
+
+    shared = [a and b for a, b in zip(strain1 > 0, strain2 > 0)]
+
+    return sum(strain1[shared] == strain2[shared]) / len(shared)
 
 
 def exclude_matches(include: Set[int], matches: Sequence[int]) -> List[int]:
@@ -254,6 +267,9 @@ def partial_sequence_match(gene: str, strain: str, genes: Path,
 
     return matches
 
+def richness_estimate():
+
+    pass
 
 def main():
 

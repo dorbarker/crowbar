@@ -10,13 +10,16 @@ import crowbar  # main script
 # regular imports
 import argparse
 import random
+from itertools import partial
 from itertools import chain
 from pathlib import Path
 from typing import Dict, Tuple
 # 3rd Party imports
 import pandas as pd
 
-
+# Complex types
+#RESULTS = Dict[Dict[int, int], List[int], Set[Optional[int]]]
+#RECOVERED = Dict[str, Dict[str, RESULTS]]
 def arguments():
 
     parser = argparse.ArgumentParser()
@@ -82,11 +85,15 @@ def truncate(strain: str, gene: str, jsondir: Path):
     return halves[side]
 
 
-def recover(truncations: Dict[str, str], distances: np.matrix, calls: pd.DataFrame, genes: Path):
+def recover_alleles(truncations: Dict[str, str], distances: np.matrix,
+                    calls: pd.DataFrame, genes: Path):
 
     gene_names = calls.columns
 
+    results = {}
+
     for strain, row in calls.iterrows():
+        results[strain] = {}
 
         # treat truncated and missing differently,
         # as missing loci have no fragment to use
@@ -94,14 +101,6 @@ def recover(truncations: Dict[str, str], distances: np.matrix, calls: pd.DataFra
         missing_genes = row[row == 0].index
 
         for gene in chain(truncated_genes, missing_genes):
-
-
-            ### Fragment matching
-            if gene in truncated_genes:
-
-                matching_fragments = crowbar.fragment_match(gene,
-                                                            truncations[gene],
-                                                            genes)
 
             ### Nearest Neighbour
             closest_alleles = crowbar.closest_relative_allele(strain, gene,
@@ -115,6 +114,45 @@ def recover(truncations: Dict[str, str], distances: np.matrix, calls: pd.DataFra
 
             left, right = calls[[left_col, right_col]].loc[strain]
             linked = triplets[left][right]
+
+
+
+            ### Fragment matching
+            try:
+                matching_fragments = crowbar.fragment_match(gene,
+                                                            truncations[gene],
+                                                            genes)
+
+                partial_matches_only = partial(crowbar.exclude_matches,
+                                               include=matching_fragments)
+
+                closest_alleles = partial_matches_only(closest_alleles)
+
+                linked = {centre: linked[centre]
+                          for centre in partial_matches_only(linked.keys())}
+            except KeyError:
+
+                matching_fragments = set()
+
+            results[strain][gene] = {'linkage': linked,
+                                     'closest': closest_alleles,
+                                     'fragments': matching_fragments}
+
+    return results
+
+
+def recover(truncation_probability: float, missing_probability: float,
+            seed: int, calls: pd.DataFrame, jsondir: Path, genes: Path,
+            cores: int):
+
+    distances = crowbar.dist_gene(calls, cores)
+
+    error_calls, truncations = introduce_random_errors(truncation_probability,
+                                                       missing_probability,
+                                                       calls, jsondir, seed)
+
+    recovered_alleles = recover_alleles(truncations, distances,
+                                        error_calls, genes)
 
 
 def main():
