@@ -267,9 +267,6 @@ def partial_sequence_match(gene: str, strain: str, genes: Path,
 
     return matches
 
-def richness_estimate():
-
-    pass
 
 def main():
 
