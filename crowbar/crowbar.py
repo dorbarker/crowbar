@@ -3,16 +3,20 @@ import json
 import re
 import operator
 import subprocess
+from collections import Counter, defaultdict
+from concurrent.futures import ProcessPoolExecutor
 from io import StringIO
 from pathlib import Path
+from statistics import mean
 from typing import Callable, Dict, List, Sequence, Set, Tuple, Union
-from collections import defaultdict
-from concurrent.futures import ProcessPoolExecutor
 
 # Third-party imports
 import pandas as pd
 import numpy as np
 from Bio import SeqIO
+
+# Local imports
+import richness_estimate
 
 # Complex type constants
 TRIPLET_COUNTS = Dict[int, Dict[int, Dict[int, int]]]
@@ -48,7 +52,7 @@ def row_distance(idx: int, row: Tuple[str, pd.Series],
 
         shared = [a and b for a, b in zip(strain1 > 0, strain2 > 0)]
 
-        return sum(strain1[shared] != strain2[shared]
+        return sum(strain1[shared] != strain2[shared])
 
     return {j: non_missing_hamming(j) for j in range(idx + 1, len(calls))}
 
@@ -266,6 +270,22 @@ def partial_sequence_match(gene: str, strain: str, genes: Path,
     matches = fragment_match(gene, fragment, genes)
 
     return matches
+
+def allele_abundances(gene: str, calls: pd.DataFrame, replicates: int = 1000,
+                      seed: int = 1):
+
+    observed_alleles = richness_estimate.Population(calls[gene])
+
+    abundance = {k: (v / len(observed_alleles.alleles)
+                 for k, v in Counter(observed_alleles.alleles).items()}
+
+    discoveries = observed_alleles.monte_carlo(replicates, seed)
+
+    last_percentile = int(0.01 * len(discoveries))
+
+    last_percentile_discovery_rate = mean(discoveries[-last_percentile:])
+
+    to_subtract_from_known = last_percentile_discovery_rate / len(abundance)
 
 
 def main():

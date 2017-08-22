@@ -11,6 +11,9 @@ class Population(object):
     def monte_carlo(self, replicates: int, seed: int = 1) -> pd.Series:
         '''Monte Carlo estimation of the probability of finding a new class
         on the next sampling.
+
+        Returns a pandas Series of the proportion replicates for which each
+        observation yielded a new class
         '''
 
         random.seed(seed)  # for reproducibility
@@ -37,11 +40,13 @@ class Population(object):
 
         return percent_new_allele
 
-    def proportion_successes(self):
-
+    def proportion_successes(self) -> float:
+        '''Returns the probability of an individual representing a new class
+        given previous discovery rate of new classes
+        '''
         return len(set(self.alleles)) / len(self.alleles)
 
-    def chao1(self):
+    def chao1(self) -> float:
         '''Implementation of the Chao 1 estimator
 
         Nonparametric Estimation of the Number of Classes in a Population
@@ -49,6 +54,8 @@ class Population(object):
 
         Built with the help of:
         https://www.uvm.edu/~ngotelli/manuscriptpdfs/Chapter%204.pdf
+
+        Returns the estimated number of classes in a population
         '''
 
         n_observed = len(set(self.alleles))
@@ -62,14 +69,17 @@ class Population(object):
 
         return n_observed + ((f_1 * (f_1 - 1)) / (2 * (f_2 + 1)))
 
-    def ace(self):
-        '''Implementation of the ACE estimator of species richness
+    def ace(self) -> float:
+        '''Implementation of the abundace-based coverage estimator (ACE)
+        of species richness
 
         Nonparametric Prediction in Species Sampling
         Anne Chao and Tsung-Jen Shen, 2004
 
         Built with the help of:
         https://www.uvm.edu/~ngotelli/manuscriptpdfs/Chapter%204.pdf
+
+        Returns the estimated number of classes in a population
         '''
 
         n_observed = len(set(self.alleles))
