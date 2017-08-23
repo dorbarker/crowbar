@@ -1,12 +1,17 @@
 import random
 from collections import Counter
+from typing import Set, Sized
 import attr
 import pandas as pd
 
 @attr.s
-class Population(object):
+class Population(Sized):
 
     alleles = attr.ib(validator=attr.validators.instance_of(pd.Series))
+    abundance = attr.ib(init=False)
+
+    def __attrs_post_init__(self):
+        self.abundance = Counter(self.alleles)
 
     def monte_carlo(self, replicates: int, seed: int = 1) -> pd.Series:
         '''Monte Carlo estimation of the probability of finding a new class
@@ -25,7 +30,7 @@ class Population(object):
 
         for replicate in range(replicates):
 
-            already_observed = set()
+            already_observed = set()  # type: Set[int]
 
             individuals = random.sample(individuals, number_obs)
 
@@ -60,8 +65,7 @@ class Population(object):
 
         n_observed = len(set(self.alleles))
 
-        abundances = Counter(self.alleles)
-        abundance_counts = list(abundances.values())
+        abundance_counts = list(self.abundance.values())
 
         f_1 = abundance_counts.count(1)
 
@@ -84,8 +88,7 @@ class Population(object):
 
         n_observed = len(set(self.alleles))
 
-        abundances = Counter(self.alleles)
-        abundance_counts = pd.Series(list(abundances.values()))
+        abundance_counts = pd.Series(list(self.abundance.values()))
 
         rare_range = list(range(1, 11))  # 1-10
         abund_range = list(range(11, max(abundance_counts) + 1))
@@ -116,3 +119,5 @@ class Population(object):
 
         return s_ace
 
+    def __len__(self):
+        return len(self.alleles)

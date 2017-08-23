@@ -5,6 +5,7 @@ import operator
 import subprocess
 from collections import Counter, defaultdict
 from concurrent.futures import ProcessPoolExecutor
+from functools import reduce
 from io import StringIO
 from pathlib import Path
 from statistics import mean
@@ -20,6 +21,8 @@ import richness_estimate
 
 # Complex type constants
 TRIPLET_COUNTS = Dict[int, Dict[int, Dict[int, int]]]
+TRIPLET_PROBS = Dict[int, Dict[int, Dict[int, float]]]
+TRIPLET_COUNT_CURRENT = Tuple[TRIPLET_COUNTS, Dict[int, int]]
 NUMERIC = Union[int, float]
 
 def arguments():
@@ -38,6 +41,10 @@ def arguments():
     parser.add_argument('genes',
                         type=Path,
                         help='Directory of gene multifastas')
+
+    parser.add_argument('jsons',
+                        type=Path,
+                        help='Directory containing MIST results')
 
     return parser.parse_args()
 
@@ -78,15 +85,15 @@ def dist_gene(calls: pd.DataFrame, cores: int) -> np.matrix:
     return dist_mat
 
 
-def closest_relatives(query: str, genomes: Sequence[str],
-                      distances: np.matrix) -> Set[int]:
+def closest_relatives(strain: str, calls: pd.DataFrame,
+                      distances: np.matrix) -> List[int]:
 
     def which(data: Sequence, operator_: Callable,
               compared: NUMERIC) -> List[int]:
 
         return [i for i, v in enumerate(data) if operator_(v, compared)]
 
-    query_index = genomes.index(query)
+    query_index = calls.columns.index(strain)
     query_distances = distances[query_index]
 
     non_self_distances = query_distances[:query_index] + \
@@ -98,17 +105,13 @@ def closest_relatives(query: str, genomes: Sequence[str],
 
     # If the minimum dist is 0, it will still match to self here,
     # so ensure the query index is not in the return value
-    closest = set(closest_indices) - {query_index}
+    closest = sorted(set(closest_indices) - {query_index})
 
     return closest
 
 
-def closest_relative_allele(strain: str, gene: str, calls: pd.DataFrame,
-                            distances: np.matrix) -> List[int]:
-
-    genomes = calls.index
-
-    closest_relative_indices = closest_relatives(strain, genomes, distances)
+def closest_relative_allele(gene: str, closest_relative_indices,
+                            calls: pd.DataFrame) -> List[int]:
 
     closest_relative_alleles = calls[gene].iloc[closest_relative_indices]
 
@@ -231,25 +234,57 @@ def load_fragment(strain: str, gene: str, jsondir: Path) -> str:
 
     test_data = test_results[test_name]
 
-    fragment = test_data['Amplicon']
+    fragment = test_data[gene]['Amplicon']
 
     return fragment
 
 
-def linkage_disequilibrium(gene: str, strain: str, reference: Path,
-                           genes: Path, calls: pd.DataFrame) -> Dict[int, int]:
+def linkage_disequilibrium(gene: str, strain: str,
+                           calls: pd.DataFrame) -> TRIPLET_COUNT_CURRENT:
 
-    ordered_calls = order_on_reference(reference, genes, calls)
-    gene_names = ordered_calls.columns
+    gene_names = calls.columns
 
-    triplets = count_triplets(gene, ordered_calls)
+    triplets = count_triplets(gene, calls)
 
     left_col = gene_names[gene_names.index(gene) - 1]
     right_col = gene_names[gene_names.index(gene) + 1]
 
-    left, right = ordered_calls[[left_col, right_col]].loc[strain]
+    left, right = calls[[left_col, right_col]].loc[strain]
 
-    return triplets[left][right]
+    strain_flanking = triplets[left][right]
+
+    return triplets, strain_flanking
+
+
+def linkage_probability(triplets, fragment_matches) -> TRIPLET_PROBS:
+
+    filtered_linkage = {k: v for k, v in triplets.items()}
+
+    linkage_probabilities = {}  # type: Dict[int, Dict]
+
+    total = 0
+
+    for left in filtered_linkage:
+        for right in filtered_linkage[left]:
+            for centre in filtered_linkage[left][right]:
+
+                if centre not in fragment_matches:
+                    del filtered_linkage[left][right][centre]
+                else:
+                    total += triplets[left][right][centre]
+
+    for left in filtered_linkage:
+        linkage_probabilities[left] = {}
+        for right in filtered_linkage[left]:
+            linkage_probabilities[left][right] = {}
+
+            for centre in filtered_linkage[left][right]:
+
+                count = filtered_linkage[left][right][centre]
+
+                linkage_probabilities[left][right][centre] = count / total
+
+    return linkage_probabilities
 
 
 def nearest_neighbour(gene: str, strain: str, included_fragments: Set[int],
@@ -263,7 +298,7 @@ def nearest_neighbour(gene: str, strain: str, included_fragments: Set[int],
 
 
 def partial_sequence_match(gene: str, strain: str, genes: Path,
-                           jsondir: Path, calls: pd.DataFrame) -> Set[int]:
+                           jsondir: Path) -> Set[int]:
 
     fragment = load_fragment(gene, strain, jsondir)
 
@@ -271,21 +306,169 @@ def partial_sequence_match(gene: str, strain: str, genes: Path,
 
     return matches
 
+
 def allele_abundances(gene: str, calls: pd.DataFrame, replicates: int = 1000,
-                      seed: int = 1):
+                      seed: int = 1) -> Dict[Union[str, int], float]:
 
     observed_alleles = richness_estimate.Population(calls[gene])
 
-    abundance = {k: (v / len(observed_alleles.alleles)
-                 for k, v in Counter(observed_alleles.alleles).items()}
+    n_alleles = len(observed_alleles.abundance)
 
     discoveries = observed_alleles.monte_carlo(replicates, seed)
 
-    last_percentile = int(0.01 * len(discoveries))
+    last_percentile = int(0.01 * len(observed_alleles))
 
     last_percentile_discovery_rate = mean(discoveries[-last_percentile:])
 
-    to_subtract_from_known = last_percentile_discovery_rate / len(abundance)
+    to_subtract_from_known = last_percentile_discovery_rate / n_alleles
+
+    abundance = {k: ((v / len(observed_alleles)) - to_subtract_from_known)
+                 for k, v in observed_alleles.abundance.items()}
+
+    abundance['?'] = last_percentile_discovery_rate
+
+    return abundance
+
+
+def redistribute_next_allele_probability(abundances, fragment_matches):
+
+    filtered_abundances = {k: v
+                           for k, v in abundances.items()
+                           if k in fragment_matches or k == '?'}
+
+    total_remaining_probability = sum(filtered_abundances.values())
+
+    adjusted_abundances = {k: v / total_remaining_probability
+                           for k, v in filtered_abundances.items()}
+
+    return adjusted_abundances
+
+
+def combine_neighbour_similarities(neighbour_similarity: float,
+                                   neighbour_alleles: List[int],
+                                   abundances: Dict[Union[int, str], float]):
+    def combine(previous, current):
+        return previous + (current * (1 - previous))
+
+    allele_proportions = Counter(neighbour_alleles)
+
+    combined_probs = {k: reduce(combine, (abundances[k] for _ in range(count)))
+                      for allele, count in allele_proportions.items()}
+
+    inverses = {k: (1 - neighbour_similarity) * (1 - abundances[k])
+                for k in combined_probs}
+
+    return combined_probs, inverses
+
+def bayes(abundances: Dict[int, float], fragment_matches: Set[int],
+          triplets: TRIPLET_COUNTS, linkage: Dict[int, int],
+          neighbour_similarity: float,
+          neighbour_alleles: List[int]) -> Dict[int, float]:
+
+
+    # the priors
+    adj_abundances = redistribute_next_allele_probability(abundances,
+                                                          fragment_matches)
+
+    # linkage counts coverted to probabilities
+    linkage_probs = linkage_probability(triplets, fragment_matches)
+
+    probs_inverse = combine_neighbour_similarities(neighbour_similarity,
+                                                   neighbour_alleles,
+                                                   adj_abundances)
+
+    neighbour_probs, inverse_neighbour = probs_inverse
+
+    def marginal_likelihood(h):
+
+        def neighbour_terms():
+
+            terms = [neighbour_probs[k] * inverse_neighbour[k]
+                     for k in neighbour_probs]
+
+            return terms
+
+        linkage_total = sum(linkage.values())
+
+        not_h_abundance = 1 - adj_abundances[h]
+
+        h_with_flanks = linkage_probs[h]
+        not_h_with_flanks = 1 - h_with_flanks
+
+        linkage_likelihood = \
+                ((h_with_flanks / linkage_total) * adj_abundances[h]) + \
+                ((not_h_with_flanks / linkage_total) * not_h_abundance)
+
+
+        return reduce(operator.mul, [linkage_likelihood] + neighbour_terms)
+
+
+    def bayes_theorem(h):
+
+        if h in neighbour_alleles:
+
+            neighbour = neighbour_probs[h]
+
+        else:
+            # neighbour = 1 - (neighbour_similarity * adj_abundances[h])
+            neighbour = inverse_neighbour[h]
+
+        p_h = adj_abundances[h]
+
+        e = marginal_likelihood(h)
+
+        e_h = (triplets[h] / sum(triplets.values())) * neighbour
+
+        h_e = (e_h * adj_abundances[h]) / e
+
+    return {h: bayes_theorem(h) for h in adj_abundances}
+
+def recover_allele(strain: str, gene: str, calls: pd.DataFrame,
+                   distances: np.matrix, genes: Path, jsondir: Path,
+                   replicates: int, seed: int):
+
+    if calls.loc[strain, gene] == -1:  # is truncation
+
+        fragment = load_fragment(strain, gene, jsondir)
+
+        fragment_matches = fragment_match(gene, fragment, genes)
+
+    else:  # is wholly missing
+
+        fragment_matches = set(calls[gene])
+
+    nearest_neighbours = nearest_neighbour(gene, strain, fragment_matches,
+                                           distances, calls)
+
+    neighbour_alleles = closest_relative_allele(gene, nearest_neighbours,
+                                                calls)
+
+    neighbour_similarity = percent_shared(calls.loc[strain],
+                                          calls.iloc[nearest_neighbours[0]])
+
+    triplets, strain_flanking = linkage_disequilibrium(gene, strain, calls)
+
+    abundance = allele_abundances(gene, calls, replicates, seed)
+
+    probs = bayes(abundance, fragment_matches, triplets, strain_flanking,
+                  neighbour_similarity, neighbour_alleles)
+
+    return probs
+
+def recover(callspath: Path, reference: Path, genes: Path, jsondir: Path,
+            replicates: int, seed: int, cores: int):
+
+    calls = order_on_reference(reference, genes,
+                               calls=pd.read_csv(callspath, index_col=0))
+
+    distances = dist_gene(calls, cores)
+
+    for strain in calls.index:
+        for gene in calls.columns:
+
+            if not calls.loc[strain, gene] > 0:  # truncated or missing
+                recover_allele(strain, gene, calls, distances, genes, jsondir,
+                               replicates, seed)
 
 
 def main():
