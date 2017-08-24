@@ -11,6 +11,9 @@ class Population(Sized):
     abundance = attr.ib(init=False)
 
     def __attrs_post_init__(self):
+
+        # Don't consider missing/truncated loci
+        self.alleles = pd.Series([a for a in self.alleles if a > 0])
         self.abundance = Counter(self.alleles)
 
     def monte_carlo(self, replicates: int, seed: int = 1) -> pd.Series:

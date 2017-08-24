@@ -34,6 +34,11 @@ def arguments():
                         default=1,
                         help='Number of CPU cores to use [1]')
 
+    parser.add_argument('--reference',
+                        type=Path,
+                        required=True,
+                        help='Path to reference genome')
+
     parser.add_argument('calls',
                         type=Path,
                         help='Table of allele calls')
@@ -51,8 +56,18 @@ def arguments():
 
 def row_distance(idx: int, row: Tuple[str, pd.Series],
                  calls: pd.DataFrame) -> Dict[int, int]:
+    """Returns the Hamming distance of non-missing alleles between two strains.
+
+    Results are returned as a dictionary for distances between the query strain
+    (strain1) and all the subject strain (each strain2).
+
+    Called by dist_gene()
+    """
 
     def non_missing_hamming(j):
+        """Returns the distance between two strains, considering only loci
+        which are not missing in either individual.
+        """
 
         strain1 = row[1]
         strain2 = calls.iloc[j]
@@ -65,7 +80,7 @@ def row_distance(idx: int, row: Tuple[str, pd.Series],
 
 
 def dist_gene(calls: pd.DataFrame, cores: int) -> np.matrix:
-
+    """Returns a Hamming distance matrix of pairwise strain distances."""
 
     n_row = len(calls)
 
@@ -112,13 +127,28 @@ def closest_relatives(strain: str, calls: pd.DataFrame,
 
 def closest_relative_allele(gene: str, closest_relative_indices,
                             calls: pd.DataFrame) -> List[int]:
-
+    """For each of the genome indices specified by `closest_relative_indices`,
+    return the allele found at `gene`.
+    """
     closest_relative_alleles = calls[gene].iloc[closest_relative_indices]
 
     return closest_relative_alleles
 
 
-def percent_shared(strain1, strain2):
+def nearest_neighbour(gene: str, strain: str, included_fragments: Set[int],
+                      distances: np.matrix, calls: pd.DataFrame) -> List[int]:
+
+    closest_alleles = closest_relative_allele(strain, gene, calls, distances)
+
+    filtered_matches = exclude_matches(included_fragments, closest_alleles)
+
+    return filtered_matches
+
+
+def percent_shared(strain1: pd.Series, strain2: pd.Series) -> float:
+    """Returns the percent similarity of two strains based on the Hamming
+    distance of non-missing loci.
+    """
 
     shared = [a and b for a, b in zip(strain1 > 0, strain2 > 0)]
 
@@ -132,6 +162,10 @@ def exclude_matches(include: Set[int], matches: Sequence[int]) -> List[int]:
 
 def order_on_reference(reference: Path, genes: Path,
                        calls: pd.DataFrame) -> pd.DataFrame:
+    """Reorders `calls` columns to reflect the gene order found in `reference`.
+
+    This is to facilitate analysis of gene linkage.
+    """
 
     gene_locations = []
 
@@ -178,6 +212,8 @@ def find_locus_location(query: str, subject: Path) -> int:
 def count_triplets(gene: str, calls: pd.DataFrame) -> TRIPLET_COUNTS:
 
     def tree():
+        """Factory function for generating tree-like dict structures"""
+
         return defaultdict(tree)
 
     left_col = calls.columns[calls.columns.index(gene) - 1]
@@ -205,38 +241,58 @@ def count_triplets(gene: str, calls: pd.DataFrame) -> TRIPLET_COUNTS:
     return json.loads(json.dumps(triplets))
 
 
-def fragment_match(gene: str, fragment: str, genes: Path) -> Set[int]:
+def partial_sequence_match(strain: str, gene: str, genes: Path,
+                           jsondir: Path) -> Set[int]:
+    """Attempts to use partial sequence data to exclude possible alleles."""
 
-    fragment_pattern = re.compile('^{seq}|{seq}$'.format(seq=fragment))
+    def fragment_match(gene: str, fragment: str, genes: Path) -> Set[int]:
+        """Attemps to match partial sequence data to a known allele from
+        a multifasta file. Matches are only attemped at the beginning and end
+        of the gene.
+        """
 
-    glob_pattern = '*{}.f*'.format(gene)
-    gene_file, *_ = genes.glob(glob_pattern)
+        fragment_pattern = re.compile('^{seq}|{seq}$'.format(seq=fragment))
 
-    with gene_file.open('r') as fasta:
+        glob_pattern = '*{}.f*'.format(gene)
+        gene_file, *_ = genes.glob(glob_pattern)
 
-        result = set(rec.id for rec in SeqIO.parse(fasta, 'fasta')
-                     if re.search(fragment_pattern, rec.seq))
+        with gene_file.open('r') as fasta:
 
-    return result
+            result = set(rec.id for rec in SeqIO.parse(fasta, 'fasta')
+                         if re.search(fragment_pattern, rec.seq))
 
-def load_fragment(strain: str, gene: str, jsondir: Path) -> str:
-    # Currently, totally MIST-based
+        return result
 
-    jsonpath = (jsondir / strain).with_suffix('.json')
+    def load_fragment(strain: str, gene: str, jsondir: Path) -> str:
 
-    with jsonpath.open('r') as json_obj:
-        data = json.load(json_obj)
+        """Loads a partial nucleotide alignment from MIST-generated JSON
+        output.
 
-    test_results = data['Results'][0]['TestResults']
+        Currently, this function assumes that there is only one cgMLST test per
+        JSON file.
+        """
 
-    # presumed to be a single test name per file
-    test_name, *_ = test_results.keys()
+        jsonpath = (jsondir / strain).with_suffix('.json')
 
-    test_data = test_results[test_name]
+        with jsonpath.open('r') as json_obj:
+            data = json.load(json_obj)
 
-    fragment = test_data[gene]['Amplicon']
+        test_results = data['Results'][0]['TestResults']
 
-    return fragment
+        # presumed to be a single test name per file
+        test_name, *_ = test_results.keys()
+
+        test_data = test_results[test_name]
+
+        fragment = test_data[gene]['Amplicon']
+
+        return fragment
+
+    fragment = load_fragment(gene, strain, jsondir)
+
+    matches = fragment_match(gene, fragment, genes)
+
+    return matches
 
 
 def linkage_disequilibrium(gene: str, strain: str,
@@ -287,28 +343,11 @@ def linkage_probability(triplets, fragment_matches) -> TRIPLET_PROBS:
     return linkage_probabilities
 
 
-def nearest_neighbour(gene: str, strain: str, included_fragments: Set[int],
-                      distances: np.matrix, calls: pd.DataFrame) -> List[int]:
-
-    closest_alleles = closest_relative_allele(strain, gene, calls, distances)
-
-    filtered_matches = exclude_matches(included_fragments, closest_alleles)
-
-    return filtered_matches
-
-
-def partial_sequence_match(gene: str, strain: str, genes: Path,
-                           jsondir: Path) -> Set[int]:
-
-    fragment = load_fragment(gene, strain, jsondir)
-
-    matches = fragment_match(gene, fragment, genes)
-
-    return matches
-
-
 def allele_abundances(gene: str, calls: pd.DataFrame, replicates: int = 1000,
                       seed: int = 1) -> Dict[Union[str, int], float]:
+    """Calculates the abundances of alleles for a given gene and attempts to
+    determine the probability that the next observation will be a new allele.
+    """
 
     observed_alleles = richness_estimate.Population(calls[gene])
 
@@ -331,6 +370,9 @@ def allele_abundances(gene: str, calls: pd.DataFrame, replicates: int = 1000,
 
 
 def redistribute_next_allele_probability(abundances, fragment_matches):
+    """Filters alleles ruled out by fragment matching and recalculates
+    abundance proportions.
+    """
 
     filtered_abundances = {k: v
                            for k, v in abundances.items()
@@ -347,13 +389,18 @@ def redistribute_next_allele_probability(abundances, fragment_matches):
 def combine_neighbour_similarities(neighbour_similarity: float,
                                    neighbour_alleles: List[int],
                                    abundances: Dict[Union[int, str], float]):
+
     def combine(previous, current):
+        """Multiplies the inverse probability of the previous iteration by
+        the probability of the current iteration.
+        """
+
         return previous + (current * (1 - previous))
 
     allele_proportions = Counter(neighbour_alleles)
 
     combined_probs = {k: reduce(combine, (abundances[k] for _ in range(count)))
-                      for allele, count in allele_proportions.items()}
+                      for k, count in allele_proportions.items()}
 
     inverses = {k: (1 - neighbour_similarity) * (1 - abundances[k])
                 for k in combined_probs}
@@ -382,6 +429,7 @@ def bayes(abundances: Dict[int, float], fragment_matches: Set[int],
     def marginal_likelihood(h):
 
         def neighbour_terms():
+            """Returns a list of terms for the denominator of Bayes Theorem."""
 
             terms = [neighbour_probs[k] * inverse_neighbour[k]
                      for k in neighbour_probs]
@@ -426,12 +474,13 @@ def bayes(abundances: Dict[int, float], fragment_matches: Set[int],
 def recover_allele(strain: str, gene: str, calls: pd.DataFrame,
                    distances: np.matrix, genes: Path, jsondir: Path,
                    replicates: int, seed: int):
-
+    """Attempts to recover the allele of a missing locus based on
+    lines of evidence from allele abundance, linkage disequilibrium, the
+    close relatives.
+    """
     if calls.loc[strain, gene] == -1:  # is truncation
 
-        fragment = load_fragment(strain, gene, jsondir)
-
-        fragment_matches = fragment_match(gene, fragment, genes)
+        fragment_matches = partial_sequence_match(strain, gene, genes, jsondir)
 
     else:  # is wholly missing
 
@@ -457,6 +506,13 @@ def recover_allele(strain: str, gene: str, calls: pd.DataFrame,
 
 def recover(callspath: Path, reference: Path, genes: Path, jsondir: Path,
             replicates: int, seed: int, cores: int):
+    """Master function for crowBAR.
+
+    Walks through a pandas DataFrame of allele calls and attempts to recover
+    any truncated (-1) or absent (0) loci.
+    """
+
+    results = {}
 
     calls = order_on_reference(reference, genes,
                                calls=pd.read_csv(callspath, index_col=0))
@@ -464,16 +520,24 @@ def recover(callspath: Path, reference: Path, genes: Path, jsondir: Path,
     distances = dist_gene(calls, cores)
 
     for strain in calls.index:
+        results[strain] = {}
         for gene in calls.columns:
 
             if not calls.loc[strain, gene] > 0:  # truncated or missing
-                recover_allele(strain, gene, calls, distances, genes, jsondir,
-                               replicates, seed)
 
+                probs = recover_allele(strain, gene, calls, distances,
+                                       genes, jsondir, replicates, seed)
+
+                results[strain][gene] = probs
+
+    print(results)
 
 def main():
 
     args = arguments()
 
+    # diag
+    recover(args.calls, args.reference, args.genes, args.jsons,
+            1000, 1, args.cores)
 if __name__ == '__main__':
     main()
