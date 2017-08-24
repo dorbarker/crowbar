@@ -26,6 +26,7 @@ TRIPLET_COUNT_CURRENT = Tuple[TRIPLET_COUNTS, Dict[int, int]]
 NUMERIC = Union[int, float]
 
 def arguments():
+    """Gather command line arguments for crowbar.py"""
 
     parser = argparse.ArgumentParser()
 
@@ -102,6 +103,10 @@ def dist_gene(calls: pd.DataFrame, cores: int) -> np.matrix:
 Neighbour = namedtuple('Neighbour', ('indices', 'alleles', 'similarity'))
 def nearest_neighbour(gene: str, strain: str, included_fragments: Set[int],
                       distances: np.matrix, calls: pd.DataFrame) -> Neighbour:
+    """Finds the nearest neighbour(s) to `strain`, and returns a Neighbour
+    namedtuple containing the row indices in `calls` of its closest relatives,
+    the allele(s) present at `gene`, and their percent Hamming similarity.
+    """
 
     def percent_shared(strain1: pd.Series, strain2: pd.Series) -> float:
         """Returns the percent similarity of two strains based on the Hamming
@@ -115,12 +120,13 @@ def nearest_neighbour(gene: str, strain: str, included_fragments: Set[int],
 
     def which(data: Sequence, operator_: Callable,
               compared: NUMERIC) -> List[int]:
+        """Returns the indices of `data` for which `operator_` is True"""
 
-            return [i for i, v in enumerate(data) if operator_(v, compared)]
+        return [i for i, v in enumerate(data) if operator_(v, compared)]
 
     def closest_relatives(strain: str, calls: pd.DataFrame,
                           distances: np.matrix) -> List[int]:
-
+        """Return the row indices of the closest relatives of `strain`."""
 
         query_index = calls.columns.index(strain)
         query_distances = distances[query_index]
@@ -141,8 +147,8 @@ def nearest_neighbour(gene: str, strain: str, included_fragments: Set[int],
 
     def closest_relative_allele(gene: str, closest_relative_indices,
                                 calls: pd.DataFrame) -> List[int]:
-        """For each of the genome indices specified by `closest_relative_indices`,
-        return the allele found at `gene`.
+        """For each of the genome indices specified by
+        `closest_relative_indices`, return the allele found at `gene`.
         """
         closest_relative_alleles = calls[gene].iloc[closest_relative_indices]
 
@@ -157,12 +163,14 @@ def nearest_neighbour(gene: str, strain: str, included_fragments: Set[int],
 
     similarity = percent_shared(calls.loc[strain],
                                 calls.iloc[closest_indices[0]])
+
     neighbour = Neighbour(closest_indices, closest_alleles, similarity)
 
     return neighbour
 
 
 def exclude_matches(include: Set[int], matches: Sequence[int]) -> List[int]:
+    """Filters `matches` based on their presence in `include`"""
 
     return [match for match in matches if match in include]
 
@@ -207,7 +215,7 @@ def find_locus_location(query: str, subject: Path) -> int:
                                    input=query,
                                    stdout=subprocess.PIPE)
 
-    table_result = pd.DataFrame(StringIO(string_result.stdout))
+    table_result = pd.read_table(StringIO(string_result.stdout))
 
     # best row should be first
     # sstart, ssend = 8, 9
@@ -217,6 +225,9 @@ def find_locus_location(query: str, subject: Path) -> int:
 
 
 def count_triplets(gene: str, calls: pd.DataFrame) -> TRIPLET_COUNTS:
+    """For three genes, (Left, Centre, Right), count how many observations of
+    Centre were associated with the flanking genes Left and Right.
+    """
 
     def tree():
         """Factory function for generating tree-like dict structures"""
@@ -295,6 +306,7 @@ def partial_sequence_match(strain: str, gene: str, genes: Path,
         fragment = test_data[gene]['Amplicon']
 
         return fragment
+
 
     fragment = load_fragment(gene, strain, jsondir)
 
@@ -514,6 +526,7 @@ def recover_allele(strain: str, gene: str, calls: pd.DataFrame,
 
     return probs
 
+
 def recover(callspath: Path, reference: Path, genes: Path, jsondir: Path,
             replicates: int, seed: int, cores: int):
     """Master function for crowBAR.
@@ -522,7 +535,7 @@ def recover(callspath: Path, reference: Path, genes: Path, jsondir: Path,
     any truncated (-1) or absent (0) loci.
     """
 
-    results = {}
+    results = {}  # Dict[str, Dict[str, Dict[int, float]
 
     calls = order_on_reference(reference, genes,
                                calls=pd.read_csv(callspath, index_col=0))
