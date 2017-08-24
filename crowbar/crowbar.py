@@ -3,7 +3,7 @@ import json
 import re
 import operator
 import subprocess
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict, namedtuple
 from concurrent.futures import ProcessPoolExecutor
 from functools import reduce
 from io import StringIO
@@ -99,60 +99,67 @@ def dist_gene(calls: pd.DataFrame, cores: int) -> np.matrix:
 
     return dist_mat
 
+Neighbour = namedtuple('Neighbour', ('indices', 'alleles', 'similarity'))
+def nearest_neighbour(gene: str, strain: str, included_fragments: Set[int],
+                      distances: np.matrix, calls: pd.DataFrame) -> Neighbour:
 
-def closest_relatives(strain: str, calls: pd.DataFrame,
-                      distances: np.matrix) -> List[int]:
+    def percent_shared(strain1: pd.Series, strain2: pd.Series) -> float:
+        """Returns the percent similarity of two strains based on the Hamming
+        distance of non-missing loci.
+        """
+
+        shared = [a and b for a, b in zip(strain1 > 0, strain2 > 0)]
+
+        return sum(strain1[shared] == strain2[shared]) / len(shared)
+
 
     def which(data: Sequence, operator_: Callable,
               compared: NUMERIC) -> List[int]:
 
-        return [i for i, v in enumerate(data) if operator_(v, compared)]
+            return [i for i, v in enumerate(data) if operator_(v, compared)]
 
-    query_index = calls.columns.index(strain)
-    query_distances = distances[query_index]
-
-    non_self_distances = query_distances[:query_index] + \
-                         query_distances[query_index + 1:]
-
-    minimum_distance = min(non_self_distances)
-
-    closest_indices = which(query_distances, operator.eq, minimum_distance)
-
-    # If the minimum dist is 0, it will still match to self here,
-    # so ensure the query index is not in the return value
-    closest = sorted(set(closest_indices) - {query_index})
-
-    return closest
+    def closest_relatives(strain: str, calls: pd.DataFrame,
+                          distances: np.matrix) -> List[int]:
 
 
-def closest_relative_allele(gene: str, closest_relative_indices,
-                            calls: pd.DataFrame) -> List[int]:
-    """For each of the genome indices specified by `closest_relative_indices`,
-    return the allele found at `gene`.
-    """
-    closest_relative_alleles = calls[gene].iloc[closest_relative_indices]
+        query_index = calls.columns.index(strain)
+        query_distances = distances[query_index]
 
-    return closest_relative_alleles
+        non_self_distances = query_distances[:query_index] + \
+                             query_distances[query_index + 1:]
+
+        minimum_distance = min(non_self_distances)
+
+        closest_indices = which(query_distances, operator.eq, minimum_distance)
+
+        # If the minimum dist is 0, it will still match to self here,
+        # so ensure the query index is not in the return value
+        closest = sorted(set(closest_indices) - {query_index})
+
+        return closest
 
 
-def nearest_neighbour(gene: str, strain: str, included_fragments: Set[int],
-                      distances: np.matrix, calls: pd.DataFrame) -> List[int]:
+    def closest_relative_allele(gene: str, closest_relative_indices,
+                                calls: pd.DataFrame) -> List[int]:
+        """For each of the genome indices specified by `closest_relative_indices`,
+        return the allele found at `gene`.
+        """
+        closest_relative_alleles = calls[gene].iloc[closest_relative_indices]
 
-    closest_alleles = closest_relative_allele(strain, gene, calls, distances)
+        return closest_relative_alleles
+
+
+    closest_indices = closest_relatives(strain, calls, distances)
+
+    closest_alleles = closest_relative_allele(gene, closest_indices, calls)
 
     filtered_matches = exclude_matches(included_fragments, closest_alleles)
 
-    return filtered_matches
+    similarity = percent_shared(calls.loc[strain],
+                                calls.iloc[closest_indices[0]])
+    neighbour = Neighbour(closest_indices, closest_alleles, similarity)
 
-
-def percent_shared(strain1: pd.Series, strain2: pd.Series) -> float:
-    """Returns the percent similarity of two strains based on the Hamming
-    distance of non-missing loci.
-    """
-
-    shared = [a and b for a, b in zip(strain1 > 0, strain2 > 0)]
-
-    return sum(strain1[shared] == strain2[shared]) / len(shared)
+    return neighbour
 
 
 def exclude_matches(include: Set[int], matches: Sequence[int]) -> List[int]:
@@ -262,6 +269,7 @@ def partial_sequence_match(strain: str, gene: str, genes: Path,
                          if re.search(fragment_pattern, rec.seq))
 
         return result
+
 
     def load_fragment(strain: str, gene: str, jsondir: Path) -> str:
 
@@ -407,10 +415,10 @@ def combine_neighbour_similarities(neighbour_similarity: float,
 
     return combined_probs, inverses
 
-def bayes(abundances: Dict[int, float], fragment_matches: Set[int],
+
+def bayes(abundances: Dict[Union[str, int], float], fragment_matches: Set[int],
           triplets: TRIPLET_COUNTS, linkage: Dict[int, int],
-          neighbour_similarity: float,
-          neighbour_alleles: List[int]) -> Dict[int, float]:
+          neighbour: Neighbour) -> Dict[int, float]:
 
 
     # the priors
@@ -420,15 +428,15 @@ def bayes(abundances: Dict[int, float], fragment_matches: Set[int],
     # linkage counts coverted to probabilities
     linkage_probs = linkage_probability(triplets, fragment_matches)
 
-    probs_inverse = combine_neighbour_similarities(neighbour_similarity,
-                                                   neighbour_alleles,
+    probs_inverse = combine_neighbour_similarities(neighbour.similarity,
+                                                   neighbour.alleles,
                                                    adj_abundances)
 
     neighbour_probs, inverse_neighbour = probs_inverse
 
-    def marginal_likelihood(h):
+    def marginal_likelihood(h: Union[str, int]) -> float:
 
-        def neighbour_terms():
+        def neighbour_terms() -> List[float]:
             """Returns a list of terms for the denominator of Bayes Theorem."""
 
             terms = [neighbour_probs[k] * inverse_neighbour[k]
@@ -451,25 +459,33 @@ def bayes(abundances: Dict[int, float], fragment_matches: Set[int],
         return reduce(operator.mul, [linkage_likelihood] + neighbour_terms)
 
 
-    def bayes_theorem(h):
+    def bayes_theorem(h: Union[str, int]) -> float:
+        """Implementation of Bayes' Theorem in which the hypothesis being
+        tested (h) is a given allele, and the lines of evidence are
+        linkage disequilibrium between genes, and the similarity of the strain
+        in question to its nearest neighbour.
+        """
 
-        if h in neighbour_alleles:
+        if h in neighbour.alleles:
 
-            neighbour = neighbour_probs[h]
+            neighbour_prob = neighbour_probs[h]
 
         else:
             # neighbour = 1 - (neighbour_similarity * adj_abundances[h])
-            neighbour = inverse_neighbour[h]
+            neighbour_prob = inverse_neighbour[h]
 
         p_h = adj_abundances[h]
 
         e = marginal_likelihood(h)
 
-        e_h = (triplets[h] / sum(triplets.values())) * neighbour
+        e_h = (triplets[h] / sum(triplets.values())) * neighbour_prob
 
-        h_e = (e_h * adj_abundances[h]) / e
+        h_e = (e_h * p_h) / e
+
+        return h_e
 
     return {h: bayes_theorem(h) for h in adj_abundances}
+
 
 def recover_allele(strain: str, gene: str, calls: pd.DataFrame,
                    distances: np.matrix, genes: Path, jsondir: Path,
@@ -486,21 +502,15 @@ def recover_allele(strain: str, gene: str, calls: pd.DataFrame,
 
         fragment_matches = set(calls[gene])
 
-    nearest_neighbours = nearest_neighbour(gene, strain, fragment_matches,
-                                           distances, calls)
-
-    neighbour_alleles = closest_relative_allele(gene, nearest_neighbours,
-                                                calls)
-
-    neighbour_similarity = percent_shared(calls.loc[strain],
-                                          calls.iloc[nearest_neighbours[0]])
+    neighbour = nearest_neighbour(gene, strain, fragment_matches,
+                                  distances, calls)
 
     triplets, strain_flanking = linkage_disequilibrium(gene, strain, calls)
 
     abundance = allele_abundances(gene, calls, replicates, seed)
 
     probs = bayes(abundance, fragment_matches, triplets, strain_flanking,
-                  neighbour_similarity, neighbour_alleles)
+                  neighbour)
 
     return probs
 
@@ -532,6 +542,7 @@ def recover(callspath: Path, reference: Path, genes: Path, jsondir: Path,
 
     print(results)
 
+
 def main():
 
     args = arguments()
@@ -539,5 +550,6 @@ def main():
     # diag
     recover(args.calls, args.reference, args.genes, args.jsons,
             1000, 1, args.cores)
+
 if __name__ == '__main__':
     main()
