@@ -9,7 +9,7 @@ from functools import reduce
 from io import StringIO
 from pathlib import Path
 from statistics import mean
-from typing import Callable, Dict, List, Sequence, Set, Tuple, Union
+from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple, Union
 
 # Third-party imports
 import pandas as pd
@@ -39,6 +39,11 @@ def arguments():
                         type=Path,
                         required=True,
                         help='Path to reference genome')
+
+    parser.add_argument('--distances',
+                        type=Path,
+                        required=False,
+                        help='Path to pre-calculated distance matrix')
 
     parser.add_argument('calls',
                         type=Path,
@@ -80,25 +85,52 @@ def row_distance(idx: int, row: Tuple[str, pd.Series],
     return {j: non_missing_hamming(j) for j in range(idx + 1, len(calls))}
 
 
-def dist_gene(calls: pd.DataFrame, cores: int) -> np.matrix:
-    """Returns a Hamming distance matrix of pairwise strain distances."""
+def hamming_distance_matrix(distance_path: Optional[Path], calls: pd.DataFrame,
+                            cores: int) -> np.matrix:
 
-    n_row = len(calls)
+    """Returns a Hamming distance matrix of pairwise strain distances.
 
-    dist_mat = np.matrix([[0 for _ in range(n_row)] for _ in range(n_row)])
+    First attempts to load a pre-calculated matrix from `distance_path and
+    returns that if possible. If there is no distance matrix located at that
+    path, it calculates one and saves it there. If no path is provided,
+    calculate the distance matrix and return it without saving to disk.
+    """
 
-    with ProcessPoolExecutor(max_workers=cores) as ppe:
-        futures = {i: ppe.submit(row_distance, i, row, calls)
-                   for i, row in enumerate(calls.iterrows())}
+    def dist_gene(calls: pd.DataFrame, cores: int) -> np.matrix:
+        """Returns a Hamming distance matrix of pairwise strain distances."""
 
-    results = {i: j.result() for i, j in futures.items()}
+        n_row = len(calls)
 
-    for i, js in results.items():
+        dist_mat = np.matrix([[0 for _ in range(n_row)] for _ in range(n_row)])
 
-        for j in js:
-            dist_mat[i, j] = dist_mat[j, i] = results[i][j]
+        with ProcessPoolExecutor(max_workers=cores) as ppe:
+            futures = {i: ppe.submit(row_distance, i, row, calls)
+                       for i, row in enumerate(calls.iterrows())}
 
-    return dist_mat
+        results = {i: j.result() for i, j in futures.items()}
+
+        for i, js in results.items():
+
+            for j in js:
+                dist_mat[i, j] = dist_mat[j, i] = results[i][j]
+
+        return dist_mat
+
+
+    try:
+
+        distances = np.matrix(pd.read_csv(distance_path))
+
+    except FileNotFoundError:
+
+        distances = dist_gene(calls, cores)
+        pd.DataFrame(distances).to_csv(distance_path)
+
+    except ValueError:
+
+        distances = dist_gene(calls, cores)
+
+    return distances
 
 Neighbour = namedtuple('Neighbour', ('indices', 'alleles', 'similarity'))
 def nearest_neighbour(gene: str, strain: str, included_fragments: Set[int],
@@ -128,19 +160,20 @@ def nearest_neighbour(gene: str, strain: str, included_fragments: Set[int],
                           distances: np.matrix) -> List[int]:
         """Return the row indices of the closest relatives of `strain`."""
 
-        query_index = calls.columns.index(strain)
-        query_distances = distances[query_index]
+        strain_index = tuple(calls.index).index(strain)
+        strain_distances = tuple(distances[strain_index].flat)
 
-        non_self_distances = query_distances[:query_index] + \
-                             query_distances[query_index + 1:]
+        non_self_distances = strain_distances[:strain_index] + \
+                             strain_distances[strain_index + 1:]
 
         minimum_distance = min(non_self_distances)
 
-        closest_indices = which(query_distances, operator.eq, minimum_distance)
+        closest_indices = which(strain_distances,
+                                operator.eq, minimum_distance)
 
         # If the minimum dist is 0, it will still match to self here,
         # so ensure the query index is not in the return value
-        closest = sorted(set(closest_indices) - {query_index})
+        closest = sorted(set(closest_indices) - {strain_index})
 
         return closest
 
@@ -207,6 +240,11 @@ def order_on_reference(reference: Path, genes: Path,
 
 
 def find_locus_location(query: str, subject: Path) -> int:
+    """Executes a BLASTn search for a core gene against a reference genome.
+
+    Returns the minimum of the start and stop locations of the gene
+    so that gene calls can be ordered relative to the reference genome.
+    """
 
     blast = ('blastn', '-task', 'megablast', '-subject', str(subject),
              '-outfmt', '10')
@@ -215,7 +253,8 @@ def find_locus_location(query: str, subject: Path) -> int:
                                    input=query,
                                    stdout=subprocess.PIPE)
 
-    table_result = pd.read_table(StringIO(string_result.stdout))
+    table_result = pd.read_table(StringIO(string_result.stdout),
+                                 sep=',', header=None)
 
     # best row should be first
     # sstart, ssend = 8, 9
@@ -234,8 +273,11 @@ def count_triplets(gene: str, calls: pd.DataFrame) -> TRIPLET_COUNTS:
 
         return defaultdict(tree)
 
-    left_col = calls.columns[calls.columns.index(gene) - 1]
-    right_col = calls.columns[calls.columns.index(gene) + 1]
+    columns = tuple(calls.columns)
+    gene_loc = columns.index(gene)
+
+    left_col = columns[gene_loc - 1]
+    right_col = columns[gene_loc + 1]
 
     triplet_calls = calls[[left_col, gene, right_col]]
 
@@ -246,8 +288,8 @@ def count_triplets(gene: str, calls: pd.DataFrame) -> TRIPLET_COUNTS:
         if -1 in row or 0 in row:
             continue
 
-
         left, centre, right = row
+
 
         try:
             triplets[left][right][centre] += 1
@@ -255,32 +297,11 @@ def count_triplets(gene: str, calls: pd.DataFrame) -> TRIPLET_COUNTS:
         except TypeError:  # if not yet initialized
             triplets[left][right][centre] = 1
 
-    # Convert back to standard dict to avoid any weirdness later
-    return json.loads(json.dumps(triplets))
-
+    return triplets
 
 def partial_sequence_match(strain: str, gene: str, genes: Path,
                            jsondir: Path) -> Set[int]:
     """Attempts to use partial sequence data to exclude possible alleles."""
-
-    def fragment_match(gene: str, fragment: str, genes: Path) -> Set[int]:
-        """Attemps to match partial sequence data to a known allele from
-        a multifasta file. Matches are only attemped at the beginning and end
-        of the gene.
-        """
-
-        fragment_pattern = re.compile('^{seq}|{seq}$'.format(seq=fragment))
-
-        glob_pattern = '*{}.f*'.format(gene)
-        gene_file, *_ = genes.glob(glob_pattern)
-
-        with gene_file.open('r') as fasta:
-
-            result = set(rec.id for rec in SeqIO.parse(fasta, 'fasta')
-                         if re.search(fragment_pattern, rec.seq))
-
-        return result
-
 
     def load_fragment(strain: str, gene: str, jsondir: Path) -> str:
 
@@ -308,7 +329,26 @@ def partial_sequence_match(strain: str, gene: str, genes: Path,
         return fragment
 
 
-    fragment = load_fragment(gene, strain, jsondir)
+    def fragment_match(gene: str, fragment: str, genes: Path) -> Set[int]:
+        """Attemps to match partial sequence data to a known allele from
+        a multifasta file. Matches are only attemped at the beginning and end
+        of the gene.
+        """
+
+        fragment_pattern = re.compile('^{seq}|{seq}$'.format(seq=fragment))
+
+        glob_pattern = '*{}.f*'.format(gene)
+        gene_file, *_ = genes.glob(glob_pattern)
+
+        with gene_file.open('r') as fasta:
+
+            result = set(rec.id for rec in SeqIO.parse(fasta, 'fasta')
+                         if re.search(fragment_pattern, str(rec.seq)))
+
+        return result
+
+
+    fragment = load_fragment(strain, gene, jsondir)
 
     matches = fragment_match(gene, fragment, genes)
 
@@ -318,7 +358,7 @@ def partial_sequence_match(strain: str, gene: str, genes: Path,
 def linkage_disequilibrium(gene: str, strain: str,
                            calls: pd.DataFrame) -> TRIPLET_COUNT_CURRENT:
 
-    gene_names = calls.columns
+    gene_names = tuple(calls.columns)
 
     triplets = count_triplets(gene, calls)
 
@@ -342,15 +382,25 @@ def linkage_probability(triplets, fragment_matches) -> TRIPLET_PROBS:
 
     for left in filtered_linkage:
         for right in filtered_linkage[left]:
+
             for centre in filtered_linkage[left][right]:
 
+                to_del = set()
+
                 if centre not in fragment_matches:
-                    del filtered_linkage[left][right][centre]
+                    to_del.add(centre)
                 else:
                     total += triplets[left][right][centre]
 
+            l_r_items = filtered_linkage[left][right].items()
+
+            new_centre = {k: v for k, v in l_r_items if k not in to_del}
+
+            filtered_linkage[left][right] = new_centre
+
     for left in filtered_linkage:
         linkage_probabilities[left] = {}
+
         for right in filtered_linkage[left]:
             linkage_probabilities[left][right] = {}
 
@@ -358,7 +408,11 @@ def linkage_probability(triplets, fragment_matches) -> TRIPLET_PROBS:
 
                 count = filtered_linkage[left][right][centre]
 
-                linkage_probabilities[left][right][centre] = count / total
+                try:
+                    linkage_probabilities[left][right][centre] = count / total
+
+                except ZeroDivisionError:
+                    linkage_probabilities[left][right][centre] = 0.0
 
     return linkage_probabilities
 
@@ -419,11 +473,19 @@ def combine_neighbour_similarities(neighbour_similarity: float,
 
     allele_proportions = Counter(neighbour_alleles)
 
-    combined_probs = {k: reduce(combine, (abundances[k] for _ in range(count)))
-                      for k, count in allele_proportions.items()}
+    combined_probs, inverses = {}, {}
 
-    inverses = {k: (1 - neighbour_similarity) * (1 - abundances[k])
-                for k in combined_probs}
+    for k, count in allele_proportions.items():
+
+        try:
+            obs = (abundances[k] for _ in range(count))
+            combined_probs[k] = reduce(combine, obs)
+
+            inverses[k] = (1 - neighbour_similarity) * (1 - abundances[k])
+
+        except KeyError:
+            combined_probs[k] = 0.0
+            inverses[k] = 1.0
 
     return combined_probs, inverses
 
@@ -482,6 +544,11 @@ def bayes(abundances: Dict[Union[str, int], float], fragment_matches: Set[int],
 
             neighbour_prob = neighbour_probs[h]
 
+        # TODO: double check this
+        elif h == '?':
+
+            neighbour_prob = 0.0
+
         else:
             # neighbour = 1 - (neighbour_similarity * adj_abundances[h])
             neighbour_prob = inverse_neighbour[h]
@@ -528,19 +595,21 @@ def recover_allele(strain: str, gene: str, calls: pd.DataFrame,
 
 
 def recover(callspath: Path, reference: Path, genes: Path, jsondir: Path,
-            replicates: int, seed: int, cores: int):
+            distance_path: Optional[Path], replicates: int, seed: int,
+            cores: int):
     """Master function for crowBAR.
 
     Walks through a pandas DataFrame of allele calls and attempts to recover
     any truncated (-1) or absent (0) loci.
     """
 
+
     results = {}  # Dict[str, Dict[str, Dict[int, float]
 
     calls = order_on_reference(reference, genes,
                                calls=pd.read_csv(callspath, index_col=0))
 
-    distances = dist_gene(calls, cores)
+    distances = hamming_distance_matrix(distance_path, calls, cores)
 
     for strain in calls.index:
         results[strain] = {}
@@ -561,7 +630,7 @@ def main():
     args = arguments()
 
     # diag
-    recover(args.calls, args.reference, args.genes, args.jsons,
+    recover(args.calls, args.reference, args.genes, args.jsons, args.distances,
             1000, 1, args.cores)
 
 if __name__ == '__main__':
