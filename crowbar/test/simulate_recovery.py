@@ -24,24 +24,24 @@ def arguments():
 
     parser = argparse.ArgumentParser()
 
-    parser = parser.add_argument('--seed',
-                                 type=int,
-                                 default=1,
-                                 help='Seed to initialize the PRNG [1]')
+    parser.add_argument('--seed',
+                        type=int,
+                        default=1,
+                        help='Seed to initialize the PRNG [1]')
 
-    parser = parser.add_argument('--truncation-probability',
-                                 type=float,
-                                 default=0.0,
-                                 store='trunc_prob',
-                                 help='Uniform probability that any given \
-                                       locus will be truncated [0.0]')
+    parser.add_argument('--truncation-probability',
+                        type=float,
+                        default=0.0,
+                        store='trunc_prob',
+                        help='Uniform probability that any given \
+                              locus will be truncated [0.0]')
 
-    parser = parser.add_argument('--missing-probability',
-                                 type=float,
-                                 default=0.0,
-                                 store='miss_prob',
-                                 help='Uniform probability that any given \
-                                       locus will be rendered missing [0.0]')
+    parser.add_argument('--missing-probability',
+                        type=float,
+                        default=0.0,
+                        store='miss_prob',
+                        help='Uniform probability that any given \
+                              locus will be rendered missing [0.0]')
 
     return parser.parse_args()
 
