@@ -3,6 +3,7 @@ import json
 import re
 import operator
 import subprocess
+import warnings
 from collections import Counter, defaultdict, namedtuple
 from concurrent.futures import ProcessPoolExecutor
 from functools import reduce
@@ -263,17 +264,14 @@ def order_on_reference(reference: Path, genes: Path,
     return calls.reindex_axis(ordered_gene_names, axis=1)
 
 
-def count_triplets(gene: str, calls: pd.DataFrame) -> TRIPLET_COUNTS:
+def flank_linkage(strain: str, gene: str, hypothesis: int, abundances,
+                  calls: pd.DataFrame) -> Tuple[float, float]:
     """For three genes, (Left, Centre, Right), count how many observations of
     Centre were associated with the flanking genes Left and Right.
     """
 
-    def tree():
-        """Factory function for generating tree-like dict structures"""
-
-        return defaultdict(tree)
-
     incomplete = pd.Series([0, -1])
+    possible = pd.Series(list(abundances.keys()))
 
     columns = tuple(calls.columns)
     gene_loc = columns.index(gene)
@@ -281,24 +279,31 @@ def count_triplets(gene: str, calls: pd.DataFrame) -> TRIPLET_COUNTS:
     left_col = columns[gene_loc - 1]
     right_col = columns[gene_loc + 1]
 
-    triplet_calls = calls[[left_col, gene, right_col]]
+    flank_left, flank_right = calls[[left_col, right_col]].loc[strain]
 
-    triplets = tree()
+    has_flank = (calls[left_col] == flank_left) & \
+                (calls[right_col] == flank_right) & \
+                (calls[gene].isin(possible))
 
-    for _, row in triplet_calls.iterrows():
-
-        if any(incomplete.isin(row)):
-            continue
-
-        left, centre, right = row
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
 
         try:
-            triplets[left][right][centre] += 1
 
-        except TypeError:  # if not yet initialized
-            triplets[left][right][centre] = 1
+            is_h = (calls[gene] == hypothesis)
+            not_h = (calls[gene] != hypothesis) & (calls[gene].isin(possible))
 
-    return triplets
+
+            flanks_given_h = sum(has_flank & is_h) / sum(has_flank)
+            flanks_given_not_h = sum(has_flank & not_h) / sum(has_flank)
+
+        # TODO: Verify this isn't mad
+        except TypeError:
+
+            flanks_given_h = 0.0
+            flanks_given_not_h = 1.0
+
+    return flanks_given_h, flanks_given_not_h
 
 def partial_sequence_match(strain: str, gene: str, genes: Path,
                            jsondir: Path) -> Set[int]:
@@ -353,93 +358,6 @@ def partial_sequence_match(strain: str, gene: str, genes: Path,
     matches = fragment_match(gene, fragment, genes)
 
     return matches
-
-
-def linkage_disequilibrium(gene: str, strain: str,
-                           calls: pd.DataFrame) -> TRIPLET_COUNT_CURRENT:
-
-    gene_names = tuple(calls.columns)
-
-    triplets = count_triplets(gene, calls)
-
-    left_col = gene_names[gene_names.index(gene) - 1]
-    right_col = gene_names[gene_names.index(gene) + 1]
-
-    left, right = calls[[left_col, right_col]].loc[strain]
-
-    strain_flanking = triplets[left][right]
-
-    return triplets, strain_flanking
-
-
-#def linkage_probability(triplets, fragment_matches) -> TRIPLET_PROBS:
-#
-#    filtered_linkage = {k: v for k, v in triplets.items()}
-#
-#    linkage_probabilities = {}  # type: Dict[int, Dict]
-#
-#    total = 0
-#
-#    for left in filtered_linkage:
-#        for right in filtered_linkage[left]:
-#
-#            for centre in filtered_linkage[left][right]:
-#
-#                to_del = set()
-#
-#                if centre not in fragment_matches:
-#                    to_del.add(centre)
-#                else:
-#                    total += triplets[left][right][centre]
-#
-#            l_r_items = filtered_linkage[left][right].items()
-#
-#            new_centre = {k: v for k, v in l_r_items if k not in to_del}
-#
-#            filtered_linkage[left][right] = new_centre
-#
-#    for left in filtered_linkage:
-#
-#        for right in filtered_linkage[left]:
-#
-#            right_candidates = {}
-#
-#            for centre in filtered_linkage[left][right]:
-#
-#                count = filtered_linkage[left][right][centre]
-#
-#                try:
-#                    right_candidates[centre] = count / total
-#
-#                except ZeroDivisionError:
-#                    right_candidates[centre] = 0.0
-#
-#            if right_candidates:
-#
-#                try:
-#
-#                    linkage_probabilities[left][right] = right_candidates
-#
-#                except KeyError:
-#
-#                    linkage_probabilities[left] = {}
-#
-#                    linkage_probabilities[left][right] = right_candidates
-#
-#    return linkage_probabilities
-#
-def linkage_probability(flanks: Dict[int, int],
-                        fragment_matches: Set[int]) -> Dict[int, float]:
-
-    filtered_flanks = {k: v for k, v in flanks.items()
-                       if k in fragment_matches}
-
-    sum_remaining = sum(filtered_flanks.values())
-
-    linkage_probabilities = {k: v / sum_remaining
-                             for k, v in filtered_flanks.items()}
-
-    return linkage_probabilities
 
 
 def allele_abundances(gene: str, calls: pd.DataFrame, replicates: int = 1000,
@@ -498,7 +416,7 @@ def combine_neighbour_similarities(neighbour_similarity: float,
         return previous + (current * (1 - previous))
 
     allele_proportions = Counter(neighbour_alleles)
-    print('Proportions:', allele_proportions)
+
     combined_probs, inverses = {}, {}
 
     for k, count in allele_proportions.items():
@@ -510,65 +428,27 @@ def combine_neighbour_similarities(neighbour_similarity: float,
             inverses[k] = (1 - neighbour_similarity) * (1 - abundances[k])
 
         except KeyError:
-            combined_probs[k] = neighbour_similarity
-            inverses[k] = 1.0 - neighbour_similarity
+
+            combined_probs[k] = 0
+            inverses[k] = 1
 
     return combined_probs, inverses
 
 
-def bayes(abundances: Dict[Union[str, int], float], fragment_matches: Set[int],
-          triplets: TRIPLET_COUNTS, linkage: Dict[int, int],
-          neighbour: Neighbour) -> Dict[int, float]:
-
+def bayes(strain: str, gene: str, abundances: Dict[Union[str, int], float],
+          fragment_matches: Set[int], neighbour: Neighbour,
+          calls: pd.DataFrame) -> Dict[int, float]:
 
     # the priors
     adj_abundances = redistribute_next_allele_probability(abundances,
                                                           fragment_matches)
 
     # linkage counts coverted to probabilities
-    linkage_probs = linkage_probability(linkage, fragment_matches)
-
     probs_inverse = combine_neighbour_similarities(neighbour.similarity,
                                                    neighbour.alleles,
                                                    adj_abundances)
 
     neighbour_probs, inverse_neighbour = probs_inverse
-
-    def marginal_likelihood(h: Union[str, int]) -> float:
-
-        def prepare_neighbour_terms() -> List[float]:
-            """Returns a list of terms for the denominator of Bayes Theorem."""
-
-            terms = [neighbour_probs[k] * inverse_neighbour[k]
-                     for k in neighbour_probs]
-
-            return terms
-
-        not_h_abundance = 1 - adj_abundances[h]
-
-        try:
-
-            h_with_flanks = linkage_probs[h]
-
-        except KeyError:
-
-            h_with_flanks = 0.0
-
-        not_h_with_flanks = 1 - h_with_flanks
-
-        linkage_likelihood = \
-                (h_with_flanks * adj_abundances[h]) + \
-                (not_h_with_flanks * not_h_abundance)
-
-        neighbour_terms = prepare_neighbour_terms()
-
-        # ... I think?
-        terms = [term for term in (linkage_likelihood, *neighbour_terms)
-                 if term > 0]
-
-        print('terms:', terms)
-        return reduce(operator.mul, terms)
-
 
     def bayes_theorem(h: Union[str, int]) -> float:
         """Implementation of Bayes' Theorem in which the hypothesis being
@@ -576,42 +456,35 @@ def bayes(abundances: Dict[Union[str, int], float], fragment_matches: Set[int],
         linkage disequilibrium between genes, and the similarity of the strain
         in question to its nearest neighbour.
         """
-        print('Hypothesis:', h)
-        print('Inverse:', inverse_neighbour)
-        print('Neighbour:', neighbour_probs)
-        if h in neighbour.alleles:
-            neighbour_prob = neighbour_probs[h]
-
-        # TODO: double check this
-        else:
-
-            neighbour_prob = 1.0 - neighbour.similarity
-
-        p_h = adj_abundances[h]
-
-        e = marginal_likelihood(h)
 
         try:
 
-            e_h = (linkage[h] / \
-                   sum(int(x) for x in linkage.values() if isinstance(x, int))) \
-                   * neighbour_prob
+            neighbour_prob = neighbour_probs[h] + inverse_neighbour[h]
 
-        except TypeError:
+        except KeyError:
 
-            e_h = neighbour_prob
+            neighbour_prob = 1
 
-        h_e = (e_h * p_h) / e
+        p_h = adj_abundances[h]
 
-        print('e_h:', e_h)
-        print('p_h:', p_h)
-        print('e:', e)
+        flanks_given_h, flanks_given_not_h = flank_linkage(strain, gene, h,
+                                                           adj_abundances,
+                                                           calls)
 
-        print('Probability:', h_e, '\n\n')
-        return h_e
+        if flanks_given_h == 0:
+            flanks_given_h = 1
 
-    print('Adjusted abundances:', adj_abundances)
-    return {h: bayes_theorem(h) for h in adj_abundances}
+        e_h = flanks_given_h * neighbour_prob
+
+        return e_h * p_h
+
+    likelihoods = {h: bayes_theorem(h) for h in adj_abundances}
+
+    e = sum(likelihoods.values())
+
+    for h in likelihoods:
+        print('hypothesis:', h)
+        print('probability:', (likelihoods[h] * adj_abundances[h]) / e)
 
 
 def recover_allele(strain: str, gene: str, calls: pd.DataFrame,
@@ -634,10 +507,7 @@ def recover_allele(strain: str, gene: str, calls: pd.DataFrame,
 
     abundance = allele_abundances(gene, calls, replicates, seed)
 
-    triplets, strain_flanking = linkage_disequilibrium(gene, strain, calls)
-
-    probs = bayes(abundance, fragment_matches, triplets, strain_flanking,
-                  neighbour)
+    probs = bayes(strain, gene, abundance, fragment_matches, neighbour, calls)
 
     return probs
 
