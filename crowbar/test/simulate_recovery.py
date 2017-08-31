@@ -10,12 +10,13 @@ import crowbar  # main script
 # regular imports
 import argparse
 import random
-from itertools import partial
+from functools import partial
 from itertools import chain
 from pathlib import Path
 from typing import Dict, Tuple
 # 3rd Party imports
 import pandas as pd
+import numpy as np
 
 # Complex types
 #RESULTS = Dict[Dict[int, int], List[int], Set[Optional[int]]]
@@ -23,6 +24,11 @@ import pandas as pd
 def arguments():
 
     parser = argparse.ArgumentParser()
+
+    parser.add_argument('--cores',
+                        type=int,
+                        default=1,
+                        help='Number of CPU cores to use [1]')
 
     parser.add_argument('--seed',
                         type=int,
@@ -43,6 +49,28 @@ def arguments():
                         help='Uniform probability that any given \
                               locus will be rendered missing [0.0]')
 
+    parser.add_argument('--distances',
+                        type=Path,
+                        required=False,
+                        help='Path to pre-calculated distance matrix')
+
+    parser.add_argument('--tempdir',
+                        type=Path,
+                        default=Path('/tmp'),
+                        help='Directory for emphermal working files')
+
+    parser.add_argument('calls',
+                        type=Path,
+                        help='Table of allele calls')
+
+    parser.add_argument('genes',
+                        type=Path,
+                        help='Directory of gene multifastas')
+
+    parser.add_argument('jsons',
+                        type=Path,
+                        help='Directory containing MIST results')
+
     return parser.parse_args()
 
 def sequential_test():
@@ -58,7 +86,9 @@ def introduce_random_errors(trunc_prob: float, miss_prob: float,
 
     random.seed(seed)
 
-    for strain, row in calls.iterrows():
+    error_calls = calls.copy()
+
+    for strain, row in error_calls.iterrows():
 
         to_truncate = [random.random() < trunc_prob for _ in row]
         to_vanish = [random.random() < miss_prob for _ in row]
@@ -69,10 +99,10 @@ def introduce_random_errors(trunc_prob: float, miss_prob: float,
         truncations = {gene: truncate(strain, gene, jsondir)
                        for gene in row[to_truncate].index}
 
-    return calls, truncation
+    return error_calls, truncations
 
 
-def truncate(strain: str, gene: str, jsondir: Path):
+def truncate(strain: str, gene: str, jsondir: Path, tempdir: Path):
 
     sequence = crowbar.load_fragment(strain, gene, jsondir)
 
