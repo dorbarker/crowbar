@@ -1,28 +1,25 @@
-# import from one level above
+# regular imports
 import sys
 import os.path
-
-up = os.path.abspath(os.path.join(os.path.dirname(__file__), os.path.pardir))
-sys.path.append(up)
-
-import crowbar  # main script
-
-# regular imports
 import argparse
 import json
 import random
 from concurrent.futures import ProcessPoolExecutor
 from functools import partial
-from itertools import chain
 from pathlib import Path
 from typing import Dict, Tuple, Union
 # 3rd Party imports
 import pandas as pd
 import numpy as np
 
+up = os.path.abspath(os.path.join(os.path.dirname(__file__), os.path.pardir))
+sys.path.append(up)
+
+import crowbar  # main script
+
 # Complex types
-#RESULTS = Dict[Dict[int, int], List[int], Set[Optional[int]]]
-#RECOVERED = Dict[str, Dict[str, RESULTS]]
+TRUNCATIONS = Dict[str, Dict[str, str]]
+
 def arguments():
 
     parser = argparse.ArgumentParser()
@@ -82,9 +79,9 @@ def sequential_test():
         # return most probable match
     pass
 
-def introduce_random_errors(trunc_prob: float, miss_prob: float,
-                            calls: pd.DataFrame, jsondir: Path,
-                            seed: int) -> Tuple[pd.DataFrame, Dict[str, str]]:
+ERROR_CALLS_TRUNCS = Tuple[pd.DataFrame, TRUNCATIONS]
+def random_errors(trunc_prob: float, miss_prob: float, calls: pd.DataFrame,
+                  jsondir: Path, seed: int) -> ERROR_CALLS_TRUNCS:
 
     random.seed(seed)
 
@@ -107,9 +104,34 @@ def introduce_random_errors(trunc_prob: float, miss_prob: float,
     return error_calls, truncations
 
 
-def truncate(strain: str, gene: str, jsondir: Path, tempdir: Path):
+def truncate(strain: str, gene: str, jsondir: Path) -> str:
 
-    sequence = crowbar.load_fragment(strain, gene, jsondir)
+    def load_fragment(strain: str, gene: str, jsondir: Path) -> str:
+
+        """Loads a partial nucleotide alignment from MIST-generated JSON
+        output.
+
+        Currently, this function assumes that there is only one cgMLST test per
+        JSON file.
+        """
+
+        jsonpath = (jsondir / strain).with_suffix('.json')
+
+        with jsonpath.open('r') as json_obj:
+            data = json.load(json_obj)
+
+        test_results = data['Results'][0]['TestResults']
+
+        # presumed to be a single test name per file
+        test_name, *_ = test_results.keys()
+
+        test_data = test_results[test_name]
+
+        fragment = test_data[gene]['Amplicon']
+
+        return fragment
+
+    sequence = load_fragment(strain, gene, jsondir)
 
     # Leave at least a 50-mer on each end
     pivot = random.randint(50, len(sequence) - 50)
@@ -119,7 +141,7 @@ def truncate(strain: str, gene: str, jsondir: Path, tempdir: Path):
 
     return halves[side]
 
-def create_dummy_jsons(truncations: Dict[str, Dict[str, str]], tempdir: Path):
+def create_dummy_jsons(truncations: TRUNCATIONS, tempdir: Path) -> None:
 
     for strain in truncations:
 
@@ -128,7 +150,7 @@ def create_dummy_jsons(truncations: Dict[str, Dict[str, str]], tempdir: Path):
 
         data = {'Results': [{'TestResults': {'dummy': genes}}]}
 
-        json_path = (jsondir / strain).with_suffix('.json')
+        json_path = (tempdir / strain).with_suffix('.json')
 
         with json_path.open('w') as out:
             json.dump(data, out)
@@ -147,25 +169,22 @@ def recover_simulated(strain: str, gene: str, calls: pd.DataFrame,
     return most_likely_allele
 
 
-def simulate_recovery(truncation_probability: float, missing_probability: float,
-                      calls: pd.DataFrame, jsondir: Path, genes: Path,
+def simulate_recovery(truncation_probability: float,
+                      missing_probability: float, calls: pd.DataFrame,
+                      jsondir: Path, genes: Path, tempdir: Path,
                       seed: int, replicates: int, cores: int):
 
 
-    error_calls, truncations = introduce_random_errors(truncation_probability,
-                                                       missing_probability,
-                                                       calls, jsondir, seed)
+    error_calls, truncations = random_errors(truncation_probability,
+                                             missing_probability,
+                                             calls, jsondir, seed)
 
-
-    error_calls, truncations = introduce_random_errors(truncation_probability,
-                                                       missing_probability,
-                                                       calls, jsondir, seed)
     create_dummy_jsons(truncations, tempdir)
 
     distances = crowbar.hamming_distance_matrix(None, error_calls, cores)
 
     recover = partial(recover_simulated, calls=error_calls,
-                      distances=distances, genes=genes,jsondir=tempdir,
+                      distances=distances, genes=genes, jsondir=tempdir,
                       seed=seed, replicates=replicates)
 
     result_futures = {}
@@ -200,7 +219,8 @@ def main():
     assert args.tempdir != args.jsondir, 'tempdir cannot equal jsondir'
 
     recover(args.trunc_prob, args.miss_prob, args.distances, args.calls,
-            args.jsons, args.genes, args.seed, args.replicates, args.cores)
+            args.jsons, args.genes, args.tempdir, args.seed, args.replicates,
+            args.cores)
 
 if __name__ == '__main__':
     main()
