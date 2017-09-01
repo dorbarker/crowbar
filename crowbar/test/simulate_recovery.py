@@ -37,26 +37,32 @@ def arguments():
     parser.add_argument('--truncation-probability',
                         type=float,
                         default=0.0,
-                        store='trunc_prob',
+                        dest='trunc_prob',
                         help='Uniform probability that any given \
                               locus will be truncated [0.0]')
 
     parser.add_argument('--missing-probability',
                         type=float,
                         default=0.0,
-                        store='miss_prob',
+                        dest='miss_prob',
                         help='Uniform probability that any given \
                               locus will be rendered missing [0.0]')
 
-    parser.add_argument('--distances',
+    parser.add_argument('--reference',
                         type=Path,
-                        required=False,
-                        help='Path to pre-calculated distance matrix')
+                        required=True,
+                        help='Path to reference genome')
 
     parser.add_argument('--tempdir',
                         type=Path,
                         default=Path('/tmp'),
                         help='Directory for emphermal working files')
+
+    parser.add_argument('--replicates',
+                        type=int,
+                        default=100,
+                        help='Number of Monte Carlo iterations for estimating \
+                              the probability of new allele discovery')
 
     parser.add_argument('calls',
                         type=Path,
@@ -176,7 +182,7 @@ def simulate_recovery(truncation_probability: float,
 
     def retrieve_results(future_dict):
 
-        cols = ['strain', 'gene', 'original', 'recovered', 'match']
+        cols = ['strain', 'gene', 'error', 'original', 'recovered', 'match']
         data = pd.DataFrame(columns=cols)
 
         for strain in future_dict:
@@ -186,9 +192,11 @@ def simulate_recovery(truncation_probability: float,
                 recovered = future_dict[strain][gene]['recovered'].result()
                 original = future_dict[strain][gene]['original']
                 match = recovered == original
+                error = future_dict[strain][gene]['error']
 
                 data = data.append({'strain': strain,
                                     'gene': gene,
+                                    'error': error,
                                     'recovered': recovered,
                                     'original': original,
                                     'match': match},
@@ -223,7 +231,8 @@ def simulate_recovery(truncation_probability: float,
                 recovered = ppe.submit(recover, strain, gene)
 
                 result = {'recovered': recovered,
-                          'original': calls.loc[strain, gene]}
+                          'original': calls.loc[strain, gene],
+                          'error': error_calls.loc[strain, gene]}
 
                 try:
                     result_futures[strain][gene] = result
@@ -244,11 +253,14 @@ def main():
 
     args = arguments()
 
-    assert args.tempdir != args.jsondir, 'tempdir cannot equal jsondir'
+    assert args.tempdir != args.jsons, 'tempdir cannot equal jsondir'
 
-    recover(args.trunc_prob, args.miss_prob, args.distances, args.calls,
-            args.jsons, args.genes, args.tempdir, args.seed, args.replicates,
-            args.cores)
+    calls = crowbar.order_on_reference(args.reference, args.genes,
+                                       pd.read_csv(args.calls, index_col=0))
+
+    simulate_recovery(args.trunc_prob, args.miss_prob, calls, args.jsons,
+                      args.genes, args.tempdir, args.seed, args.replicates,
+                      args.cores)
 
 if __name__ == '__main__':
     main()
