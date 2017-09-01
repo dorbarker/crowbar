@@ -277,7 +277,11 @@ def flank_linkage(strain: str, gene: str, hypothesis: int, abundances,
     gene_loc = columns.index(gene)
 
     left_col = columns[gene_loc - 1]
-    right_col = columns[gene_loc + 1]
+
+    try:
+        right_col = columns[gene_loc + 1]
+    except IndexError:
+        right_col = columns[0]
 
     flank_left, flank_right = calls[[left_col, right_col]].loc[strain]
 
