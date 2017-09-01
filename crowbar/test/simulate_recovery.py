@@ -158,6 +158,8 @@ def simulate_recovery(truncation_probability: float, missing_probability: float,
 
 
     error_calls, truncations = introduce_random_errors(truncation_probability,
+                                                       missing_probability,
+                                                       calls, jsondir, seed)
     create_dummy_jsons(truncations, tempdir)
 
     distances = crowbar.hamming_distance_matrix(None, error_calls, cores)

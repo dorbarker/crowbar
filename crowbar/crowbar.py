@@ -482,10 +482,8 @@ def bayes(strain: str, gene: str, abundances: Dict[Union[str, int], float],
 
     e = sum(likelihoods.values())
 
-    for h in likelihoods:
-        print('hypothesis:', h)
-        print('probability:', (likelihoods[h] * adj_abundances[h]) / e)
-
+    return {h: ((likelihoods[h] * adj_abundances[h]) / e)
+            for h in adj_abundances}
 
 def recover_allele(strain: str, gene: str, calls: pd.DataFrame,
                    distances: np.matrix, genes: Path, jsondir: Path,
