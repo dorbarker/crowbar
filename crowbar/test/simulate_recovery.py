@@ -172,7 +172,29 @@ def recover_simulated(strain: str, gene: str, calls: pd.DataFrame,
 def simulate_recovery(truncation_probability: float,
                       missing_probability: float, calls: pd.DataFrame,
                       jsondir: Path, genes: Path, tempdir: Path,
-                      seed: int, replicates: int, cores: int):
+                      seed: int, replicates: int, cores: int) -> pd.DataFrame:
+
+    def retrieve_results(future_dict):
+
+        cols = ['strain', 'gene', 'original', 'recovered', 'match']
+        data = pd.DataFrame(columns=cols)
+
+        for strain in future_dict:
+
+            for gene in future_dict[strain]:
+
+                recovered = future_dict[strain][gene]['recovered'].result()
+                original = future_dict[strain][gene]['original']
+                match = recovered == original
+
+                data = data.append({'strain': strain,
+                                    'gene': gene,
+                                    'recovered': recovered,
+                                    'original': original,
+                                    'match': match},
+                                    ignore_index=True)
+
+        return data
 
 
     error_calls, truncations = random_errors(truncation_probability,
@@ -210,7 +232,13 @@ def simulate_recovery(truncation_probability: float,
                     result_futures[strain] = {}
                     result_futures[strain][gene] = result
 
-    return result_futures
+    return retrieve_results(result_futures)
+
+def summarize_results(results: pd.DataFrame, result_out: Path):
+
+    results.to_csv(result_out, sep='\t')
+
+
 
 def main():
 
