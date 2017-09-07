@@ -4,7 +4,7 @@ import re
 import operator
 import subprocess
 import warnings
-from collections import Counter, defaultdict, namedtuple
+from collections import Counter, namedtuple
 from concurrent.futures import ProcessPoolExecutor
 from functools import reduce
 from io import StringIO
@@ -19,6 +19,7 @@ from Bio import SeqIO
 
 # Local imports
 import richness_estimate
+from shared import user_msg, logtime
 
 # Complex type constants
 TRIPLET_COUNTS = Dict[int, Dict[int, Dict[int, int]]]
@@ -246,6 +247,9 @@ def order_on_reference(reference: Path, genes: Path,
 
         gene_name = gene.stem
 
+        if gene_name not in calls.columns:
+            continue
+
         with gene.open('r') as fasta:
 
             # Use just the first record
@@ -263,7 +267,7 @@ def order_on_reference(reference: Path, genes: Path,
 
     return calls.reindex_axis(ordered_gene_names, axis=1)
 
-
+@logtime('Linkage disequilibrium')
 def flank_linkage(strain: str, gene: str, hypothesis: int, abundances,
                   calls: pd.DataFrame) -> Tuple[float, float]:
     """For three genes, (Left, Centre, Right), count how many observations of
@@ -309,6 +313,8 @@ def flank_linkage(strain: str, gene: str, hypothesis: int, abundances,
 
     return flanks_given_h, flanks_given_not_h
 
+
+@logtime('Partial sequence matching')
 def partial_sequence_match(strain: str, gene: str, genes: Path,
                            jsondir: Path) -> Set[int]:
     """Attempts to use partial sequence data to exclude possible alleles."""
@@ -363,7 +369,7 @@ def partial_sequence_match(strain: str, gene: str, genes: Path,
 
     return matches
 
-
+@logtime('Allele abundances')
 def allele_abundances(gene: str, calls: pd.DataFrame, replicates: int = 1000,
                       seed: int = 1) -> Dict[Union[str, int], float]:
     """Calculates the abundances of alleles for a given gene and attempts to
@@ -411,6 +417,7 @@ def redistribute_next_allele_probability(abundances, fragment_matches):
 def combine_neighbour_similarities(neighbour_similarity: float,
                                    neighbour_alleles: List[int],
                                    abundances: Dict[Union[int, str], float]):
+    """Use weighting for multiple observations of the same neightbour allele"""
 
     def combine(previous, current):
         """Multiplies the inverse probability of the previous iteration by
