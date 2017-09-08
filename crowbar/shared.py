@@ -1,5 +1,6 @@
 import sys
 import functools
+from datetime import datetime
 
 def user_msg(*messages):
     """Wrapper for print() that prints to stderr"""

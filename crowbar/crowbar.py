@@ -6,7 +6,7 @@ import subprocess
 import warnings
 from collections import Counter, namedtuple
 from concurrent.futures import ProcessPoolExecutor
-from functools import reduce
+from functools import partial, reduce
 from io import StringIO
 from pathlib import Path
 from statistics import mean
@@ -60,6 +60,21 @@ def arguments():
                         help='Directory containing MIST results')
 
     return parser.parse_args()
+
+@logtime('Getting allele abundances')
+def gene_allele_abundances(calls: pd.DataFrame, replicates: int,
+                           seed: int, cores: int) -> Dict[str, float]:
+
+    with ProcessPoolExecutor(max_workers=cores) as ppe:
+
+        get_allele_abundances = partial(allele_abundances,
+                                        calls=calls,
+                                        replicates=replicates,
+                                        seed=seed)
+
+        abundances = dict(ppe.map(get_allele_abundances, calls.columns))
+
+    return abundances
 
 
 def row_distance(idx: int, row: Tuple[str, pd.Series],
@@ -121,12 +136,15 @@ def hamming_distance_matrix(distance_path: Optional[Path], calls: pd.DataFrame,
 
     try:
 
-        distances = np.matrix(pd.read_csv(distance_path))
+        distances = np.matrix(pd.read_csv(distance_path, header=0, index_col=0))
 
     except FileNotFoundError:
 
         distances = dist_gene(calls, cores)
-        pd.DataFrame(distances).to_csv(distance_path)
+
+        pd.DataFrame(distances,
+                     index=calls.index,
+                     columns=calls.index).to_csv(distance_path)
 
     except ValueError:
 
@@ -209,13 +227,7 @@ def exclude_matches(include: Set[int], matches: Sequence[int]) -> List[int]:
 
     return [match for match in matches if match in include]
 
-
-def order_on_reference(reference: Path, genes: Path,
-                       calls: pd.DataFrame) -> pd.DataFrame:
-    """Reorders `calls` columns to reflect the gene order found in `reference`.
-
-    This is to facilitate analysis of gene linkage.
-    """
+def find_locus_in_reference(gene: Path, reference: Path):
 
     def find_locus_location(query: str) -> int:
         """Executes a BLASTn search for a core gene against a reference genome.
@@ -241,25 +253,35 @@ def order_on_reference(reference: Path, genes: Path,
         return min(start, stop)
 
 
-    gene_locations = []
+    gene_name = gene.stem
 
-    for gene in genes.glob('*.fasta'):
+    with gene.open('r') as fasta:
 
-        gene_name = gene.stem
+        # Use just the first record
+        rec = next(SeqIO.parse(fasta, 'fasta'))
 
-        if gene_name not in calls.columns:
-            continue
+        query = str(rec.seq)
 
-        with gene.open('r') as fasta:
+        loc = find_locus_location(query)
 
-            # Use just the first record
-            rec = next(SeqIO.parse(fasta, 'fasta'))
+    return gene_name, loc
 
-            query = str(rec.seq)
+#@logtime('Reordering calls by reference')
+def order_on_reference(reference: Path, genes: Path, calls: pd.DataFrame,
+                       cores: int) -> pd.DataFrame:
+    """Reorders `calls` columns to reflect the gene order found in `reference`.
 
-            loc = find_locus_location(query)
+    This is to facilitate analysis of gene linkage.
+    """
 
-            gene_locations.append((gene_name, loc))
+    fasta_files =  (gene for gene in genes.glob('*.fasta')
+                    if gene.stem in calls.columns)
+
+    with ProcessPoolExecutor(max_workers=cores) as ppe:
+
+        find_locus = partial(find_locus_in_reference, reference=reference)
+
+        gene_locations = list(ppe.map(find_locus, fasta_files))
 
     ordered_gene_locations = sorted(gene_locations, key=operator.itemgetter(1))
 
@@ -267,14 +289,13 @@ def order_on_reference(reference: Path, genes: Path,
 
     return calls.reindex_axis(ordered_gene_names, axis=1)
 
-@logtime('Linkage disequilibrium')
+#@logtime('Linkage disequilibrium')
 def flank_linkage(strain: str, gene: str, hypothesis: int, abundances,
                   calls: pd.DataFrame) -> Tuple[float, float]:
     """For three genes, (Left, Centre, Right), count how many observations of
     Centre were associated with the flanking genes Left and Right.
     """
 
-    incomplete = pd.Series([0, -1])
     possible = pd.Series(list(abundances.keys()))
 
     columns = tuple(calls.columns)
@@ -314,7 +335,7 @@ def flank_linkage(strain: str, gene: str, hypothesis: int, abundances,
     return flanks_given_h, flanks_given_not_h
 
 
-@logtime('Partial sequence matching')
+#@logtime('Partial sequence matching')
 def partial_sequence_match(strain: str, gene: str, genes: Path,
                            jsondir: Path) -> Set[int]:
     """Attempts to use partial sequence data to exclude possible alleles."""
@@ -351,7 +372,7 @@ def partial_sequence_match(strain: str, gene: str, genes: Path,
         of the gene.
         """
 
-        fragment_pattern = re.compile('^{seq}|{seq}$'.format(seq=fragment))
+        fragment_pattern = re.compile('(^{seq})|({seq}$)'.format(seq=fragment))
 
         glob_pattern = '*{}.f*'.format(gene)
         gene_file, *_ = genes.glob(glob_pattern)
@@ -369,7 +390,6 @@ def partial_sequence_match(strain: str, gene: str, genes: Path,
 
     return matches
 
-@logtime('Allele abundances')
 def allele_abundances(gene: str, calls: pd.DataFrame, replicates: int = 1000,
                       seed: int = 1) -> Dict[Union[str, int], float]:
     """Calculates the abundances of alleles for a given gene and attempts to
@@ -393,7 +413,7 @@ def allele_abundances(gene: str, calls: pd.DataFrame, replicates: int = 1000,
 
     abundance['?'] = last_percentile_discovery_rate
 
-    return abundance
+    return gene, abundance
 
 
 def redistribute_next_allele_probability(abundances, fragment_matches):
@@ -470,7 +490,7 @@ def bayes(strain: str, gene: str, abundances: Dict[Union[str, int], float],
 
         try:
 
-            neighbour_prob = neighbour_probs[h] + inverse_neighbour[h]
+            neighbour_prob = neighbour_probs[h] #+ inverse_neighbour[h]
 
         except KeyError:
 
@@ -483,7 +503,7 @@ def bayes(strain: str, gene: str, abundances: Dict[Union[str, int], float],
                                                            calls)
 
         if flanks_given_h == 0:
-            flanks_given_h = 1
+            flanks_given_h =
 
         e_h = flanks_given_h * neighbour_prob
 
@@ -498,11 +518,16 @@ def bayes(strain: str, gene: str, abundances: Dict[Union[str, int], float],
 
 def recover_allele(strain: str, gene: str, calls: pd.DataFrame,
                    distances: np.matrix, genes: Path, jsondir: Path,
-                   replicates: int, seed: int):
+                   gene_abundances):
     """Attempts to recover the allele of a missing locus based on
     lines of evidence from allele abundance, linkage disequilibrium, the
     close relatives.
+
+    If the locus is truncated, fragment matching can be used to eliminate
+    possible alleles. If the gene is wholly missing, then all alleles are in
+    contention.
     """
+
     if calls.loc[strain, gene] == -1:  # is truncation
 
         fragment_matches = partial_sequence_match(strain, gene, genes, jsondir)
@@ -511,10 +536,11 @@ def recover_allele(strain: str, gene: str, calls: pd.DataFrame,
 
         fragment_matches = set(calls[gene])
 
+
     neighbour = nearest_neighbour(gene, strain, fragment_matches,
                                   distances, calls)
 
-    abundance = allele_abundances(gene, calls, replicates, seed)
+    abundance = gene_abundances[gene]
 
     probs = bayes(strain, gene, abundance, fragment_matches, neighbour, calls)
 
@@ -534,25 +560,42 @@ def recover(callspath: Path, reference: Path, genes: Path, jsondir: Path,
     results = {}  # Dict[str, Dict[str, Dict[int, float]
 
     calls = order_on_reference(reference, genes,
-                               calls=pd.read_csv(callspath, index_col=0))
+                               pd.read_csv(callspath, index_col=0), cores)
 
     distances = hamming_distance_matrix(distance_path, calls, cores)
-    print("Done getting order and distances")
+
+    gene_abundances = gene_allele_abundances(calls, replicates, seed, cores)
+
+    total_bad = sum((calls < 1).sum())
+
+    counter = 0
 
     for strain in calls.index:
-        results[strain] = {}
+
+        # DIAG
+        if counter >= 10:
+            from pprint import pprint
+            pprint(results)
+            break
+
         for gene in calls.columns:
 
             if not calls.loc[strain, gene] > 0:  # truncated or missing
-                print('Working on', gene, strain, '::', calls.loc[strain, gene])
+                user_msg('Working on', gene, strain, '::', calls.loc[strain, gene])
                 probs = recover_allele(strain, gene, calls, distances,
-                                       genes, jsondir, replicates, seed)
+                                       genes, jsondir, gene_abundances)
 
-                results[strain][gene] = probs
+                try:
+                    results[strain][gene] = probs
 
+                except KeyError:
 
-    print(results)
+                    results[strain] = {}
+                    results[strain][gene] = probs
 
+                counter += 1
+
+                user_msg(counter, '/', total_bad)
 
 def main():
 
@@ -560,7 +603,7 @@ def main():
 
     # diag
     recover(args.calls, args.reference, args.genes, args.jsons, args.distances,
-            1000, 1, args.cores)
+            100, 1, args.cores)
 
 if __name__ == '__main__':
     main()
