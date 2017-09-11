@@ -1,6 +1,7 @@
 import argparse
 import json
 import re
+import math
 import operator
 import subprocess
 import warnings
@@ -37,6 +38,17 @@ def arguments():
                         default=1,
                         help='Number of CPU cores to use [1]')
 
+    parser.add_argument('--replicates',
+                        type=int,
+                        default=100,
+                        help='Replicates for the Monte Carlo estimation of \
+                              the probability of finding a novel allele')
+
+    parser.add_argument('--seed',
+                        type=int,
+                        default=1,
+                        help='Seed to initialize the Monte Carlo simulation')
+
     parser.add_argument('--reference',
                         type=Path,
                         required=True,
@@ -64,6 +76,11 @@ def arguments():
 @logtime('Getting allele abundances')
 def gene_allele_abundances(calls: pd.DataFrame, replicates: int,
                            seed: int, cores: int) -> Dict[str, float]:
+    """Get the allele probabilities, including the those of a novel allele,
+    for every gene in `calls`.
+
+    Runs in parallel.
+    """
 
     with ProcessPoolExecutor(max_workers=cores) as ppe:
 
@@ -136,7 +153,8 @@ def hamming_distance_matrix(distance_path: Optional[Path], calls: pd.DataFrame,
 
     try:
 
-        distances = np.matrix(pd.read_csv(distance_path, header=0, index_col=0))
+        distances = np.matrix(pd.read_csv(distance_path,
+                                          header=0, index_col=0))
 
     except FileNotFoundError:
 
@@ -274,8 +292,8 @@ def order_on_reference(reference: Path, genes: Path, calls: pd.DataFrame,
     This is to facilitate analysis of gene linkage.
     """
 
-    fasta_files =  (gene for gene in genes.glob('*.fasta')
-                    if gene.stem in calls.columns)
+    fasta_files = (gene for gene in genes.glob('*.fasta')
+                   if gene.stem in calls.columns)
 
     with ProcessPoolExecutor(max_workers=cores) as ppe:
 
@@ -290,13 +308,15 @@ def order_on_reference(reference: Path, genes: Path, calls: pd.DataFrame,
     return calls.reindex_axis(ordered_gene_names, axis=1)
 
 #@logtime('Linkage disequilibrium')
-def flank_linkage(strain: str, gene: str, hypothesis: int, abundances,
+def flank_linkage(strain: str, gene: str, hypothesis: int, gene_abundances,
                   calls: pd.DataFrame) -> Tuple[float, float]:
     """For three genes, (Left, Centre, Right), count how many observations of
     Centre were associated with the flanking genes Left and Right.
     """
 
-    possible = pd.Series(list(abundances.keys()))
+
+    possible = pd.Series(list(gene_abundances[gene].keys()))
+
 
     columns = tuple(calls.columns)
     gene_loc = columns.index(gene)
@@ -315,24 +335,25 @@ def flank_linkage(strain: str, gene: str, hypothesis: int, abundances,
                 (calls[gene].isin(possible))
 
     with warnings.catch_warnings():
+
         warnings.simplefilter('ignore')
 
         try:
-
             is_h = (calls[gene] == hypothesis)
-            not_h = (calls[gene] != hypothesis) & (calls[gene].isin(possible))
-
 
             flanks_given_h = sum(has_flank & is_h) / sum(has_flank)
-            flanks_given_not_h = sum(has_flank & not_h) / sum(has_flank)
 
-        # TODO: Verify this isn't mad
+            if math.isnan(flanks_given_h):
+                raise TypeError
+
         except TypeError:
 
-            flanks_given_h = 0.0
-            flanks_given_not_h = 1.0
+            flanks_given_h = 0
 
-    return flanks_given_h, flanks_given_not_h
+    # If hypothesis is *never* observed with these flanks, it's not
+    # impossible - merely unlikely. Use the probability of an unobserved allele
+    # as the base probability
+    return flanks_given_h or gene_abundances[gene]['?']
 
 
 #@logtime('Partial sequence matching')
@@ -416,7 +437,7 @@ def allele_abundances(gene: str, calls: pd.DataFrame, replicates: int = 1000,
     return gene, abundance
 
 
-def redistribute_next_allele_probability(abundances, fragment_matches):
+def redistribute_allele_probability(abundances, fragment_matches):
     """Filters alleles ruled out by fragment matching and recalculates
     abundance proportions.
     """
@@ -448,38 +469,41 @@ def combine_neighbour_similarities(neighbour_similarity: float,
 
     allele_proportions = Counter(neighbour_alleles)
 
-    combined_probs, inverses = {}, {}
+    combined_probs = {}
 
     for k, count in allele_proportions.items():
 
         try:
-            obs = (abundances[k] for _ in range(count))
-            combined_probs[k] = reduce(combine, obs)
 
-            inverses[k] = (1 - neighbour_similarity) * (1 - abundances[k])
+            obs = (abundances[k] for _ in range(count))
+            probs = reduce(combine, obs)
+
+            combined_probs[k] = probs
 
         except KeyError:
 
             combined_probs[k] = 0
-            inverses[k] = 1
 
-    return combined_probs, inverses
+    #combined_probs['?'] = abundances['?']
+    adjusted_similarities = redistribute_allele_probability(combined_probs,
+                                                            set(abundances))
+
+    return adjusted_similarities
 
 
-def bayes(strain: str, gene: str, abundances: Dict[Union[str, int], float],
+def bayes(strain: str, gene: str, gene_abundances,
           fragment_matches: Set[int], neighbour: Neighbour,
           calls: pd.DataFrame) -> Dict[int, float]:
 
     # the priors
-    adj_abundances = redistribute_next_allele_probability(abundances,
-                                                          fragment_matches)
+    adj_abundances = redistribute_allele_probability(gene_abundances[gene],
+                                                     fragment_matches)
 
     # linkage counts coverted to probabilities
-    probs_inverse = combine_neighbour_similarities(neighbour.similarity,
-                                                   neighbour.alleles,
-                                                   adj_abundances)
+    neighbour_probs = combine_neighbour_similarities(neighbour.similarity,
+                                                     neighbour.alleles,
+                                                     adj_abundances)
 
-    neighbour_probs, inverse_neighbour = probs_inverse
 
     def bayes_theorem(h: Union[str, int]) -> float:
         """Implementation of Bayes' Theorem in which the hypothesis being
@@ -494,16 +518,11 @@ def bayes(strain: str, gene: str, abundances: Dict[Union[str, int], float],
 
         except KeyError:
 
-            neighbour_prob = 1
+            neighbour_prob = adj_abundances['?']
 
         p_h = adj_abundances[h]
 
-        flanks_given_h, flanks_given_not_h = flank_linkage(strain, gene, h,
-                                                           adj_abundances,
-                                                           calls)
-
-        if flanks_given_h == 0:
-            flanks_given_h =
+        flanks_given_h = flank_linkage(strain, gene, h, gene_abundances, calls)
 
         e_h = flanks_given_h * neighbour_prob
 
@@ -540,9 +559,8 @@ def recover_allele(strain: str, gene: str, calls: pd.DataFrame,
     neighbour = nearest_neighbour(gene, strain, fragment_matches,
                                   distances, calls)
 
-    abundance = gene_abundances[gene]
-
-    probs = bayes(strain, gene, abundance, fragment_matches, neighbour, calls)
+    probs = bayes(strain, gene, gene_abundances,
+                  fragment_matches, neighbour, calls)
 
     return probs
 
@@ -573,14 +591,14 @@ def recover(callspath: Path, reference: Path, genes: Path, jsondir: Path,
     for strain in calls.index:
 
         # DIAG
-        if counter >= 10:
-            from pprint import pprint
-            pprint(results)
-            break
+        #if counter >= 10:
+        #    from pprint import pprint
+        #    pprint(results)
+        #    break
 
         for gene in calls.columns:
 
-            if not calls.loc[strain, gene] > 0:  # truncated or missing
+            if calls.loc[strain, gene] < 1:  # truncated or missing
                 user_msg('Working on', gene, strain, '::', calls.loc[strain, gene])
                 probs = recover_allele(strain, gene, calls, distances,
                                        genes, jsondir, gene_abundances)
@@ -597,13 +615,15 @@ def recover(callspath: Path, reference: Path, genes: Path, jsondir: Path,
 
                 user_msg(counter, '/', total_bad)
 
+
 def main():
+    """Main function. Gathers arguments and passes them to recover()"""
 
     args = arguments()
 
     # diag
     recover(args.calls, args.reference, args.genes, args.jsons, args.distances,
-            100, 1, args.cores)
+            args.replicates, args.seed, args.cores)
 
 if __name__ == '__main__':
     main()

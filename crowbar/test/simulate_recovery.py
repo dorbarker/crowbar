@@ -87,27 +87,54 @@ def sequential_test():
 
 ERROR_CALLS_TRUNCS = Tuple[pd.DataFrame, TRUNCATIONS]
 def random_errors(trunc_prob: float, miss_prob: float, calls: pd.DataFrame,
-                  jsondir: Path, seed: int) -> ERROR_CALLS_TRUNCS:
+                  jsondir: Path, seed: int, cores: int) -> ERROR_CALLS_TRUNCS:
 
     random.seed(seed)
 
-    error_calls = calls.copy()
+    error_calls = pd.DataFrame(columns=calls.columns)
 
     truncations = {}
+    strains = []
 
-    for strain, row in error_calls.iterrows():
+    modify = partial(modify_row, trunc_prob=trunc_prob,
+                     miss_prob=miss_prob, jsondir=jsondir)
 
-        to_truncate = [random.random() < trunc_prob for _ in row]
-        to_vanish = [random.random() < miss_prob for _ in row]
+    with ProcessPoolExecutor(max_workers=cores) as ppe:
+        errors = ppe.map(modify, calls.iterrows())
 
-        row[to_truncate] = [-1 for _ in row]
-        row[to_vanish] = [0 for _ in row]
+    for line in errors:
 
-        truncations[strain] = {gene: truncate(strain, gene, jsondir)
-                               for gene in row[to_truncate].index}
+        strain = line['strain']
 
+        strains.append(strain)
+
+        truncations[strain] = line['truncations']
+
+        row = zip(error_calls.columns, line['row'])
+
+        error_calls = error_calls.append(dict(row), ignore_index=True)
+
+    error_calls.index = strains
+
+    assert all(error_calls.index == calls.index), 'Mismatched row order'
 
     return error_calls, truncations
+
+
+def modify_row(strain_row, trunc_prob, miss_prob, jsondir):
+
+    strain, row = strain_row
+
+    to_truncate = [random.random() < trunc_prob for _ in row]
+    to_vanish = [random.random() < miss_prob for _ in row]
+
+    row[to_truncate] = [-1 for _ in row]
+    row[to_vanish] = [0 for _ in row]
+
+    truncs = {gene: truncate(strain, gene, jsondir)
+              for gene in row[to_truncate].index}
+
+    return {'strain': strain, 'row': row, 'truncations': truncs}
 
 
 def truncate(strain: str, gene: str, jsondir: Path) -> str:
@@ -164,10 +191,10 @@ def create_dummy_jsons(truncations: TRUNCATIONS, tempdir: Path) -> None:
 
 def recover_simulated(strain: str, gene: str, calls: pd.DataFrame,
                       distances: np.matrix, genes: Path, jsondir: Path,
-                      replicates: int, seed: int) -> Union[int, str]:
+                      gene_abundances) -> Union[int, str]:
 
     probs = crowbar.recover_allele(strain, gene, calls, distances, genes,
-                                   jsondir, replicates, seed)
+                                   jsondir, gene_abundances)
 
 
     most_likely_allele = max(probs, key=lambda x: probs[x])
@@ -206,16 +233,20 @@ def simulate_recovery(truncation_probability: float,
 
 
     error_calls, truncations = random_errors(truncation_probability,
-                                             missing_probability,
-                                             calls, jsondir, seed)
+                                             missing_probability, calls,
+                                             jsondir, seed, cores)
 
     create_dummy_jsons(truncations, tempdir)
 
     distances = crowbar.hamming_distance_matrix(None, error_calls, cores)
 
+    gene_abundances = crowbar.gene_allele_abundances(calls, replicates,
+                                                     seed, cores)
+
     recover = partial(recover_simulated, calls=error_calls,
                       distances=distances, genes=genes, jsondir=tempdir,
-                      seed=seed, replicates=replicates)
+                      gene_abundances=gene_abundances)
+
 
     result_futures = {}
 
@@ -248,7 +279,6 @@ def summarize_results(results: pd.DataFrame, result_out: Path):
     results.to_csv(result_out, sep='\t')
 
 
-
 def main():
 
     args = arguments()
@@ -256,11 +286,14 @@ def main():
     assert args.tempdir != args.jsons, 'tempdir cannot equal jsondir'
 
     calls = crowbar.order_on_reference(args.reference, args.genes,
-                                       pd.read_csv(args.calls, index_col=0))
+                                       pd.read_csv(args.calls, index_col=0),
+                                       args.cores)
 
-    simulate_recovery(args.trunc_prob, args.miss_prob, calls, args.jsons,
-                      args.genes, args.tempdir, args.seed, args.replicates,
-                      args.cores)
+    results = simulate_recovery(args.trunc_prob, args.miss_prob, calls,
+                                args.jsons, args.genes, args.tempdir,
+                                args.seed, args.replicates, args.cores)
+
+    summarize_results(results, Path('/home/dbarker/Desktop/recovery.test'))
 
 if __name__ == '__main__':
     main()
