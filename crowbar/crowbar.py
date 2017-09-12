@@ -112,9 +112,8 @@ def row_distance(idx: int, row: Tuple[str, pd.Series],
         strain1 = row[1]
         strain2 = calls.iloc[j]
 
-        shared = [a and b for a, b in zip(strain1 > 0, strain2 > 0)]
-
-        return sum(strain1[shared] != strain2[shared])
+        return sum([a > 0 and b > 0 and a != b
+                    for a, b in zip(strain1, strain2)])
 
     return {j: non_missing_hamming(j) for j in range(idx + 1, len(calls))}
 
