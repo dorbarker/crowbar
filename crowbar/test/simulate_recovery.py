@@ -64,6 +64,11 @@ def arguments():
                         help='Number of Monte Carlo iterations for estimating \
                               the probability of new allele discovery')
 
+    parser.add_argument('--output',
+                        type=Path,
+                        required=True,
+                        help='Output path')
+
     parser.add_argument('calls',
                         type=Path,
                         help='Table of allele calls')
@@ -78,12 +83,13 @@ def arguments():
 
     return parser.parse_args()
 
-def sequential_test():
+def sequential_test(calls: pd.DataFrame, jsondir: Path, genes: Path,
+                    tempdir: Path, seed: int, replicates: int, cores: int):
+    truncations = {}
 
-    # for each calls[strain, gene], truncate or vanish
-        # get results
-        # return most probable match
-    pass
+    for strain in calls.index:
+        for gene in calls.columns:
+            truncations[strain] = truncate(strain, gene, jsondir)
 
 ERROR_CALLS_TRUNCS = Tuple[pd.DataFrame, TRUNCATIONS]
 def random_errors(trunc_prob: float, miss_prob: float, calls: pd.DataFrame,
@@ -207,19 +213,20 @@ def simulate_recovery(truncation_probability: float,
                       jsondir: Path, genes: Path, tempdir: Path,
                       seed: int, replicates: int, cores: int) -> pd.DataFrame:
 
-    def retrieve_results(future_dict):
+    def retrieve_results(result_dict):
 
         cols = ['strain', 'gene', 'error', 'original', 'recovered', 'match']
 
         data = []
-        for strain in future_dict:
 
-            for gene in future_dict[strain]:
+        for strain in result_dict:
 
-                recovered = future_dict[strain][gene]['recovered']
-                original = future_dict[strain][gene]['original']
+            for gene in result_dict[strain]:
+
+                recovered = result_dict[strain][gene]['recovered']
+                original = result_dict[strain][gene]['original']
                 match = recovered == original
-                error = future_dict[strain][gene]['error']
+                error = result_dict[strain][gene]['error']
 
                 data.append({'strain': strain,
                              'gene': gene,
@@ -248,7 +255,7 @@ def simulate_recovery(truncation_probability: float,
                       gene_abundances=gene_abundances)
 
 
-    result_futures = {}
+    raw_results = {}
 
     for strain in error_calls.index:
 
@@ -264,13 +271,14 @@ def simulate_recovery(truncation_probability: float,
                       'error': error_calls.loc[strain, gene]}
 
             try:
-                result_futures[strain][gene] = result
+                raw_results[strain][gene] = result
 
             except KeyError:
-                result_futures[strain] = {}
-                result_futures[strain][gene] = result
+                raw_results[strain] = {}
+                raw_results[strain][gene] = result
 
-    return retrieve_results(result_futures)
+    return retrieve_results(raw_results)
+
 
 def summarize_results(results: pd.DataFrame, result_out: Path):
 
@@ -291,7 +299,7 @@ def main():
                                 args.jsons, args.genes, args.tempdir,
                                 args.seed, args.replicates, args.cores)
 
-    summarize_results(results, Path('/home/dbarker/Desktop/recovery.test'))
+    summarize_results(results, args.output)
 
 if __name__ == '__main__':
     main()

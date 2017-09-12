@@ -118,6 +118,7 @@ def row_distance(idx: int, row: Tuple[str, pd.Series],
     return {j: non_missing_hamming(j) for j in range(idx + 1, len(calls))}
 
 
+@logtime('Calculating distance matrix')
 def hamming_distance_matrix(distance_path: Optional[Path], calls: pd.DataFrame,
                             cores: int) -> np.matrix:
 
@@ -475,7 +476,7 @@ def combine_neighbour_similarities(neighbour_similarity: float,
         try:
 
             obs = (abundances[k] for _ in range(count))
-            probs = reduce(combine, obs)
+            probs = reduce(combine, obs) * neighbour_similarity
 
             combined_probs[k] = probs
 
