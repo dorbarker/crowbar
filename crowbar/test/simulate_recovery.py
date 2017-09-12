@@ -210,26 +210,26 @@ def simulate_recovery(truncation_probability: float,
     def retrieve_results(future_dict):
 
         cols = ['strain', 'gene', 'error', 'original', 'recovered', 'match']
-        data = pd.DataFrame(columns=cols)
 
+        data = []
         for strain in future_dict:
 
             for gene in future_dict[strain]:
 
-                recovered = future_dict[strain][gene]['recovered'].result()
+                recovered = future_dict[strain][gene]['recovered']
                 original = future_dict[strain][gene]['original']
                 match = recovered == original
                 error = future_dict[strain][gene]['error']
 
-                data = data.append({'strain': strain,
-                                    'gene': gene,
-                                    'error': error,
-                                    'recovered': recovered,
-                                    'original': original,
-                                    'match': match},
-                                    ignore_index=True)
+                data.append({'strain': strain,
+                             'gene': gene,
+                             'error': error,
+                             'recovered': recovered,
+                             'original': original,
+                             'match': match})
 
-        return data
+        data_df = pd.DataFrame(data, columns=cols)
+        return data_df
 
 
     error_calls, truncations = random_errors(truncation_probability,
@@ -250,33 +250,31 @@ def simulate_recovery(truncation_probability: float,
 
     result_futures = {}
 
-    with ProcessPoolExecutor(max_workers=cores) as ppe:
+    for strain in error_calls.index:
 
-        for strain in error_calls.index:
+        for gene in error_calls.columns:
 
-            for gene in error_calls.columns:
+            if error_calls.loc[strain, gene] > 0:
+                continue
 
-                if error_calls.loc[strain, gene] > 0:
-                    continue
+            recovered = recover(strain, gene)
 
-                recovered = ppe.submit(recover, strain, gene)
+            result = {'recovered': recovered,
+                      'original': calls.loc[strain, gene],
+                      'error': error_calls.loc[strain, gene]}
 
-                result = {'recovered': recovered,
-                          'original': calls.loc[strain, gene],
-                          'error': error_calls.loc[strain, gene]}
+            try:
+                result_futures[strain][gene] = result
 
-                try:
-                    result_futures[strain][gene] = result
-
-                except KeyError:
-                    result_futures[strain] = {}
-                    result_futures[strain][gene] = result
+            except KeyError:
+                result_futures[strain] = {}
+                result_futures[strain][gene] = result
 
     return retrieve_results(result_futures)
 
 def summarize_results(results: pd.DataFrame, result_out: Path):
 
-    results.to_csv(result_out, sep='\t')
+    results.to_csv(result_out, sep='\t', index=False)
 
 
 def main():
