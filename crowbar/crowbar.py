@@ -455,8 +455,7 @@ def redistribute_allele_probability(abundances, fragment_matches):
     return adjusted_abundances
 
 
-def combine_neighbour_similarities(neighbour_similarity: float,
-                                   neighbour_alleles: List[int],
+def combine_neighbour_similarities(neighbour: Neighbour,
                                    abundances: Dict[Union[int, str], float]):
     """Use weighting for multiple observations of the same neightbour allele"""
 
@@ -467,22 +466,22 @@ def combine_neighbour_similarities(neighbour_similarity: float,
 
         return previous + (current * (1 - previous))
 
-    allele_proportions = Counter(neighbour_alleles)
+    allele_proportions = Counter(neighbour.alleles)
 
     combined_probs = {}
 
-    for k in abundances:
+    for k, count in allele_proportions.items():
 
-        if k in allele_proportions:
+        try:
 
             obs = (abundances[k] for _ in range(count))
-            probs = reduce(combine, obs) * neighbour_similarity
+            probs = reduce(combine, obs) * neighbour.similarity
 
             combined_probs[k] = probs
 
-        else:
+        except KeyError:  # closest allele (k) is not possible
 
-            combined_probs[k] = (1 - neighbour.similarity) * abundances[k]
+            combined_probs[k] = 0
 
     adjusted_similarities = redistribute_allele_probability(combined_probs,
                                                             set(abundances))
@@ -499,9 +498,7 @@ def bayes(strain: str, gene: str, gene_abundances,
                                                      fragment_matches)
 
     # linkage counts coverted to probabilities
-    neighbour_probs = combine_neighbour_similarities(neighbour.similarity,
-                                                     neighbour.alleles,
-                                                     adj_abundances)
+    neighbour_probs = combine_neighbour_similarities(neighbour, adj_abundances)
 
 
     def bayes_theorem(h: Union[str, int]) -> float:
@@ -513,11 +510,11 @@ def bayes(strain: str, gene: str, gene_abundances,
 
         try:
 
-            neighbour_prob = neighbour_probs[h] #+ inverse_neighbour[h]
+            neighbour_prob = neighbour_probs[h]
 
         except KeyError:
 
-            neighbour_prob = adj_abundances['?']
+            neighbour_prob = (1 - neighbour.similarity) * adj_abundances[h]
 
         p_h = adj_abundances[h]
 
@@ -588,12 +585,6 @@ def recover(callspath: Path, reference: Path, genes: Path, jsondir: Path,
     counter = 0
 
     for strain in calls.index:
-
-        # DIAG
-        #if counter >= 10:
-        #    from pprint import pprint
-        #    pprint(results)
-        #    break
 
         for gene in calls.columns:
 
