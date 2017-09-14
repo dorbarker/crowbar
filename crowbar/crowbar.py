@@ -471,20 +471,19 @@ def combine_neighbour_similarities(neighbour_similarity: float,
 
     combined_probs = {}
 
-    for k, count in allele_proportions.items():
+    for k in abundances:
 
-        try:
+        if k in allele_proportions:
 
             obs = (abundances[k] for _ in range(count))
             probs = reduce(combine, obs) * neighbour_similarity
 
             combined_probs[k] = probs
 
-        except KeyError:
+        else:
 
-            combined_probs[k] = 0
+            combined_probs[k] = (1 - neighbour.similarity) * abundances[k]
 
-    #combined_probs['?'] = abundances['?']
     adjusted_similarities = redistribute_allele_probability(combined_probs,
                                                             set(abundances))
 
