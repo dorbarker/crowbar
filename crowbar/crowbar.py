@@ -455,50 +455,31 @@ def redistribute_allele_probability(abundances, fragment_matches):
     return adjusted_abundances
 
 
-def combine_neighbour_similarities(neighbour: Neighbour,
-                                   abundances: Dict[Union[int, str], float]):
+def neighbour_similarities(neighbour: Neighbour,
+                           abundances: Dict[Union[int, str], float]):
     """Use weighting for multiple observations of the same neightbour allele"""
-
-    def combine(previous, current):
-        """Multiplies the inverse probability of the previous iteration by
-        the probability of the current iteration.
-        """
-
-        return previous + (current * (1 - previous))
 
     allele_proportions = Counter(neighbour.alleles)
 
     combined_probs = {}
 
-    for k, count in allele_proportions.items():
+    for k, abund in abundances.items():
 
-        try:
+        if k in allele_proportions:
 
-            obs = (abundances[k] for _ in range(count))
-            probs = reduce(combine, obs) * neighbour.similarity
+            count = allele_proportions[k]
 
-            combined_probs[k] = probs
+            combined_probs[k] = neighbour.similarity * (1 - (abund ** count))
 
-        except KeyError:  # closest allele (k) is not possible
+        else:
 
-            combined_probs[k] = 0
+            combined_probs[k] = (1 - neighbour.similarity) * abund
 
     adjusted_similarities = redistribute_allele_probability(combined_probs,
                                                             set(abundances))
-
     return adjusted_similarities
 
-
-def bayes(strain: str, gene: str, gene_abundances,
-          fragment_matches: Set[int], neighbour: Neighbour,
-          calls: pd.DataFrame) -> Dict[int, float]:
-
-    # the priors
-    adj_abundances = redistribute_allele_probability(gene_abundances[gene],
-                                                     fragment_matches)
-
-    # linkage counts coverted to probabilities
-    neighbour_probs = combine_neighbour_similarities(neighbour, adj_abundances)
+def bayes(adj_abundances, neighbour_probs, flanks) -> Dict[int, float]:
 
 
     def bayes_theorem(h: Union[str, int]) -> float:
@@ -508,19 +489,13 @@ def bayes(strain: str, gene: str, gene_abundances,
         in question to its nearest neighbour.
         """
 
-        try:
+        neighbour_probability = neighbour_probs[h]
 
-            neighbour_prob = neighbour_probs[h]
-
-        except KeyError:
-
-            neighbour_prob = (1 - neighbour.similarity) * adj_abundances[h]
+        flanks_given_h = flanks[h]
 
         p_h = adj_abundances[h]
 
-        flanks_given_h = flank_linkage(strain, gene, h, gene_abundances, calls)
-
-        e_h = flanks_given_h * neighbour_prob
+        e_h = flanks_given_h * neighbour_probability
 
         return e_h * p_h
 
@@ -549,16 +524,23 @@ def recover_allele(strain: str, gene: str, calls: pd.DataFrame,
 
     else:  # is wholly missing
 
-        fragment_matches = set(calls[gene])
+        fragment_matches = set(calls[gene]) - {0, -1}
 
+
+    adj_abundances = redistribute_allele_probability(gene_abundances[gene],
+                                                     fragment_matches)
 
     neighbour = nearest_neighbour(gene, strain, fragment_matches,
                                   distances, calls)
 
-    probs = bayes(strain, gene, gene_abundances,
-                  fragment_matches, neighbour, calls)
+    neighbour_probs = neighbour_similarities(neighbour, adj_abundances)
 
-    return probs
+    flanks = {h: flank_linkage(strain, gene, h, gene_abundances, calls)
+              for h in adj_abundances}
+
+    probabilities = bayes(adj_abundances, neighbour_probs, flanks)
+
+    return probabilities
 
 
 def recover(callspath: Path, reference: Path, genes: Path, jsondir: Path,
