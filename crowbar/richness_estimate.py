@@ -1,8 +1,10 @@
 import random
 from collections import Counter
+from functools import reduce
 from typing import Set, Sized
 import attr
 import pandas as pd
+import numpy as np
 
 @attr.s
 class Population(Sized):
@@ -16,7 +18,7 @@ class Population(Sized):
         self.alleles = pd.Series([a for a in self.alleles if a > 0])
         self.abundance = Counter(self.alleles)
 
-    def monte_carlo(self, replicates: int, seed: int = 1) -> pd.Series:
+    def monte_carlo(self, replicates: int, seed: int = 1) -> np.ndarray:
         '''Monte Carlo estimation of the probability of finding a new class
         on the next sampling.
 
@@ -26,7 +28,7 @@ class Population(Sized):
 
         random.seed(seed)  # for reproducibility
 
-        new_allele = pd.Series([0 for _ in self.alleles])
+        new_allele = np.zeros_like(self.alleles)
 
         individuals = list(self.alleles)
         number_obs = len(individuals)
@@ -47,6 +49,7 @@ class Population(Sized):
         percent_new_allele = new_allele / replicates
 
         return percent_new_allele
+
 
     def proportion_successes(self) -> float:
         '''Returns the probability of an individual representing a new class
