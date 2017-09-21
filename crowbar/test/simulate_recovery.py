@@ -16,6 +16,7 @@ up = os.path.abspath(os.path.join(os.path.dirname(__file__), os.path.pardir))
 sys.path.append(up)
 
 import crowbar  # main script
+from shared import logtime
 
 # Complex types
 TRUNCATIONS = Dict[str, Dict[str, str]]
@@ -207,7 +208,7 @@ def recover_simulated(strain: str, gene: str, calls: pd.DataFrame,
 
     return most_likely_allele
 
-
+logtime('Recovery simulation')
 def simulate_recovery(truncation_probability: float,
                       missing_probability: float, calls: pd.DataFrame,
                       jsondir: Path, genes: Path, tempdir: Path,
