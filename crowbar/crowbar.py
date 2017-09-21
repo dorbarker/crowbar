@@ -104,12 +104,13 @@ def row_distance(idx: int, row: Tuple[str, pd.Series],
     Called by dist_gene()
     """
 
+    strain1 = row[1]
+
     def non_missing_hamming(j):
         """Returns the distance between two strains, considering only loci
         which are not missing in either individual.
         """
 
-        strain1 = row[1]
         strain2 = calls.iloc[j]
 
         return sum([a > 0 and b > 0 and a != b
@@ -135,7 +136,7 @@ def hamming_distance_matrix(distance_path: Optional[Path], calls: pd.DataFrame,
 
         n_row = len(calls)
 
-        dist_mat = np.matrix([[0 for _ in range(n_row)] for _ in range(n_row)])
+        dist_mat = np.matrix([np.zeros(n_row) for _ in range(n_row)], dtype=int)
 
         with ProcessPoolExecutor(max_workers=cores) as ppe:
             futures = {i: ppe.submit(row_distance, i, row, calls)
@@ -188,26 +189,26 @@ def nearest_neighbour(gene: str, strain: str, included_fragments: Set[int],
         return sum(strain1[shared] == strain2[shared]) / len(shared)
 
 
-    def which(data: Sequence, operator_: Callable,
-              compared: NUMERIC) -> List[int]:
-        """Returns the indices of `data` for which `operator_` is True"""
+    def which(data: Sequence, compared: NUMERIC) -> List[int]:
+        """Returns the indices of `data` equal to `compared`"""
 
-        return [i for i, v in enumerate(data) if operator_(v, compared)]
+        return np.where(data == compared)[0]
 
     def closest_relatives(strain: str, calls: pd.DataFrame,
                           distances: np.matrix) -> List[int]:
         """Return the row indices of the closest relatives of `strain`."""
 
         strain_index = tuple(calls.index).index(strain)
-        strain_distances = tuple(distances[strain_index].flat)
+        strain_distances = np.array(distances[strain_index].flat)
 
-        non_self_distances = strain_distances[:strain_index] + \
-                             strain_distances[strain_index + 1:]
+        not_self = [strain_distances[:strain_index],
+                    strain_distances[strain_index + 1:]]
+
+        non_self_distances = np.concatenate(not_self)
 
         minimum_distance = min(non_self_distances)
 
-        closest_indices = which(strain_distances,
-                                operator.eq, minimum_distance)
+        closest_indices = which(strain_distances, minimum_distance)
 
         # If the minimum dist is 0, it will still match to self here,
         # so ensure the query index is not in the return value
