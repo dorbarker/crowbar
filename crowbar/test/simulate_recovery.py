@@ -93,6 +93,7 @@ def sequential_test(calls: pd.DataFrame, jsondir: Path, genes: Path,
             truncations[strain] = truncate(strain, gene, jsondir)
 
 ERROR_CALLS_TRUNCS = Tuple[pd.DataFrame, TRUNCATIONS]
+@logtime('Adding random errors')
 def random_errors(trunc_prob: float, miss_prob: float, calls: pd.DataFrame,
                   jsondir: Path, seed: int, cores: int) -> ERROR_CALLS_TRUNCS:
 
@@ -181,6 +182,7 @@ def truncate(strain: str, gene: str, jsondir: Path) -> str:
 
     return halves[side]
 
+@logtime('Creating dummy JSONs')
 def create_dummy_jsons(truncations: TRUNCATIONS, tempdir: Path) -> None:
 
     for strain in truncations:
@@ -208,7 +210,7 @@ def recover_simulated(strain: str, gene: str, calls: pd.DataFrame,
 
     return most_likely_allele
 
-logtime('Recovery simulation')
+@logtime('Recovery simulation')
 def simulate_recovery(truncation_probability: float,
                       missing_probability: float, calls: pd.DataFrame,
                       jsondir: Path, genes: Path, tempdir: Path,

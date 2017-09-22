@@ -136,7 +136,9 @@ def hamming_distance_matrix(distance_path: Optional[Path], calls: pd.DataFrame,
 
         n_row = len(calls)
 
-        dist_mat = np.matrix([np.zeros(n_row) for _ in range(n_row)], dtype=int)
+        dist_mat = np.matrix([np.zeros(n_row)
+                              for _ in range(n_row)],
+                              dtype=int)
 
         with ProcessPoolExecutor(max_workers=cores) as ppe:
             futures = {i: ppe.submit(row_distance, i, row, calls)
@@ -231,8 +233,6 @@ def nearest_neighbour(gene: str, strain: str, included_fragments: Set[int],
 
     closest_alleles = closest_relative_allele(gene, closest_indices, calls)
 
-    filtered_matches = exclude_matches(included_fragments, closest_alleles)
-
     similarity = percent_shared(calls.loc[strain],
                                 calls.iloc[closest_indices[0]])
 
@@ -240,11 +240,6 @@ def nearest_neighbour(gene: str, strain: str, included_fragments: Set[int],
 
     return neighbour
 
-
-def exclude_matches(include: Set[int], matches: Sequence[int]) -> List[int]:
-    """Filters `matches` based on their presence in `include`"""
-
-    return [match for match in matches if match in include]
 
 def find_locus_in_reference(gene: Path, reference: Path):
 
@@ -316,7 +311,8 @@ def flank_linkage(strain: str, gene: str, hypothesis: int, gene_abundances,
     """
 
 
-    possible = pd.Series(list(gene_abundances[gene].keys()))
+    possible = np.array([a for a in gene_abundances[gene].keys()
+                         if a != '?'])
 
 
     columns = tuple(calls.columns)
@@ -331,9 +327,13 @@ def flank_linkage(strain: str, gene: str, hypothesis: int, gene_abundances,
 
     flank_left, flank_right = calls[[left_col, right_col]].loc[strain]
 
-    has_flank = (calls[left_col] == flank_left) & \
-                (calls[right_col] == flank_right) & \
-                (calls[gene].isin(possible))
+    left = np.array(calls[left_col])
+    rght = np.array(calls[right_col])
+    cntr = np.array(calls[gene])
+
+    has_flank = (left == flank_left) & \
+                (rght == flank_right) & \
+                (np.isin(cntr, possible))
 
     with warnings.catch_warnings():
 
@@ -342,7 +342,7 @@ def flank_linkage(strain: str, gene: str, hypothesis: int, gene_abundances,
         try:
             is_h = (calls[gene] == hypothesis)
 
-            flanks_given_h = sum(has_flank & is_h) / sum(has_flank)
+            flanks_given_h = (has_flank & is_h).sum() / has_flank.sum()
 
             if math.isnan(flanks_given_h):
                 raise TypeError
@@ -424,7 +424,7 @@ def allele_abundances(gene: str, calls: pd.DataFrame, replicates: int = 1000,
 
     discoveries = observed_alleles.monte_carlo(replicates, seed)
 
-    last_percentile = int(0.01 * len(observed_alleles))
+    last_percentile = max(1, int(0.01 * len(observed_alleles)))
 
     last_percentile_discovery_rate = mean(discoveries[-last_percentile:])
 
