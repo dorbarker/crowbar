@@ -82,6 +82,8 @@ def gene_allele_abundances(calls: pd.DataFrame, replicates: int,
     Runs in parallel.
     """
 
+    query_genes = calls.apply(lambda col: any(col < 1), axis=0).keys()
+
     with ProcessPoolExecutor(max_workers=cores) as ppe:
 
         get_allele_abundances = partial(allele_abundances,
@@ -89,13 +91,12 @@ def gene_allele_abundances(calls: pd.DataFrame, replicates: int,
                                         replicates=replicates,
                                         seed=seed)
 
-        abundances = dict(ppe.map(get_allele_abundances, calls.columns))
+        abundances = dict(ppe.map(get_allele_abundances, query_genes))
 
     return abundances
 
 
-def row_distance(idx: int, row: Tuple[str, pd.Series],
-                 calls: pd.DataFrame) -> Dict[int, int]:
+def row_distance(idx: int, row, calls: pd.DataFrame) -> Dict[int, int]:
     """Returns the Hamming distance of non-missing alleles between two strains.
 
     Results are returned as a dictionary for distances between the query strain
@@ -104,14 +105,14 @@ def row_distance(idx: int, row: Tuple[str, pd.Series],
     Called by dist_gene()
     """
 
-    strain1 = row[1]
+    strain1 = row.flat
 
     def non_missing_hamming(j):
         """Returns the distance between two strains, considering only loci
         which are not missing in either individual.
         """
 
-        strain2 = calls.iloc[j]
+        strain2 = calls[j].flat
 
         return sum([a > 0 and b > 0 and a != b
                     for a, b in zip(strain1, strain2)])
@@ -140,9 +141,11 @@ def hamming_distance_matrix(distance_path: Optional[Path], calls: pd.DataFrame,
                               for _ in range(n_row)],
                               dtype=int)
 
+        calls_mat = calls.as_matrix()
+
         with ProcessPoolExecutor(max_workers=cores) as ppe:
-            futures = {i: ppe.submit(row_distance, i, row, calls)
-                       for i, row in enumerate(calls.iterrows())}
+            futures = {i: ppe.submit(row_distance, i, row, calls_mat)
+                       for i, row in enumerate(calls_mat)}
 
         results = {i: j.result() for i, j in futures.items()}
 
@@ -156,8 +159,8 @@ def hamming_distance_matrix(distance_path: Optional[Path], calls: pd.DataFrame,
 
     try:
 
-        distances = np.matrix(pd.read_csv(distance_path,
-                                          header=0, index_col=0))
+        distances = pd.read_csv(distance_path,
+                                header=0, index_col=0).as_matrix()
 
     except FileNotFoundError:
 
