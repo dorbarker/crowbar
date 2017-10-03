@@ -4,6 +4,7 @@ import re
 import math
 import operator
 import subprocess
+import sys
 import warnings
 from collections import Counter, namedtuple
 from concurrent.futures import ProcessPoolExecutor
@@ -27,6 +28,7 @@ TRIPLET_COUNTS = Dict[int, Dict[int, Dict[int, int]]]
 TRIPLET_PROBS = Dict[int, Dict[int, Dict[int, float]]]
 TRIPLET_COUNT_CURRENT = Tuple[TRIPLET_COUNTS, Dict[int, int]]
 NUMERIC = Union[int, float]
+
 
 def arguments():
     """Gather command line arguments for crowbar.py"""
@@ -59,6 +61,11 @@ def arguments():
                         required=False,
                         help='Path to pre-calculated distance matrix')
 
+    parser.add_argument('--output',
+                        type=Path,
+                        required=False,
+                        help='JSON-formatted output destination [stdout]')
+
     parser.add_argument('calls',
                         type=Path,
                         help='Table of allele calls')
@@ -73,7 +80,7 @@ def arguments():
 
     return parser.parse_args()
 
-@logtime('Getting allele abundances')
+
 def gene_allele_abundances(calls: pd.DataFrame, replicates: int,
                            seed: int, cores: int) -> Dict[str, float]:
     """Get the allele probabilities, including the those of a novel allele,
@@ -120,7 +127,7 @@ def row_distance(idx: int, row, calls: pd.DataFrame) -> Dict[int, int]:
     return {j: non_missing_hamming(j) for j in range(idx + 1, len(calls))}
 
 
-@logtime('Calculating distance matrix')
+
 def hamming_distance_matrix(distance_path: Optional[Path], calls: pd.DataFrame,
                             cores: int) -> np.matrix:
 
@@ -283,7 +290,7 @@ def find_locus_in_reference(gene: Path, reference: Path):
 
     return gene_name, loc
 
-#@logtime('Reordering calls by reference')
+
 def order_on_reference(reference: Path, genes: Path, calls: pd.DataFrame,
                        cores: int) -> pd.DataFrame:
     """Reorders `calls` columns to reflect the gene order found in `reference`.
@@ -306,7 +313,7 @@ def order_on_reference(reference: Path, genes: Path, calls: pd.DataFrame,
 
     return calls.reindex_axis(ordered_gene_names, axis=1)
 
-#@logtime('Linkage disequilibrium')
+
 def flank_linkage(strain: str, gene: str, hypothesis: int, gene_abundances,
                   calls: pd.DataFrame) -> Tuple[float, float]:
     """For three genes, (Left, Centre, Right), count how many observations of
@@ -360,7 +367,6 @@ def flank_linkage(strain: str, gene: str, hypothesis: int, gene_abundances,
     return flanks_given_h or gene_abundances[gene]['?']
 
 
-#@logtime('Partial sequence matching')
 def partial_sequence_match(strain: str, gene: str, genes: Path,
                            jsondir: Path) -> Set[int]:
     """Attempts to use partial sequence data to exclude possible alleles."""
@@ -575,7 +581,7 @@ def recover(callspath: Path, reference: Path, genes: Path, jsondir: Path,
         for gene in calls.columns:
 
             if calls.loc[strain, gene] < 1:  # truncated or missing
-                user_msg('Working on', gene, strain, '::', calls.loc[strain, gene])
+
                 probs = recover_allele(strain, gene, calls, distances,
                                        genes, jsondir, gene_abundances)
 
@@ -591,15 +597,24 @@ def recover(callspath: Path, reference: Path, genes: Path, jsondir: Path,
 
                 user_msg(counter, '/', total_bad)
 
+    return results
+
+
+def write_output(results, outpath: Path) -> None:
+
+    out = outpath or sys.stdout
+
+    json.dump(results, out, indent=4, sort_keys=True)
 
 def main():
     """Main function. Gathers arguments and passes them to recover()"""
 
     args = arguments()
 
-    # diag
     recover(args.calls, args.reference, args.genes, args.jsons, args.distances,
             args.replicates, args.seed, args.cores)
+
+    write_output(args.output)
 
 if __name__ == '__main__':
     main()
