@@ -112,14 +112,14 @@ def row_distance(idx: int, row, calls: pd.DataFrame) -> Dict[int, int]:
     Called by dist_gene()
     """
 
-    strain1 = row.flat
+    strain1 = row
 
     def non_missing_hamming(j):
         """Returns the distance between two strains, considering only loci
         which are not missing in either individual.
         """
 
-        strain2 = calls[j].flat
+        strain2 = calls[j]
 
         return sum([a > 0 and b > 0 and a != b
                     for a, b in zip(strain1, strain2)])
@@ -485,9 +485,8 @@ def neighbour_similarities(neighbour: Neighbour,
 
             combined_probs[k] = (1 - neighbour.similarity) * abund
 
-    adjusted_similarities = redistribute_allele_probability(combined_probs,
-                                                            set(abundances))
-    return adjusted_similarities
+    return combined_probs
+
 
 def bayes(adj_abundances, neighbour_probs, flanks) -> Dict[int, float]:
 
@@ -503,11 +502,9 @@ def bayes(adj_abundances, neighbour_probs, flanks) -> Dict[int, float]:
 
         flanks_given_h = flanks[h]
 
-        p_h = adj_abundances[h]
-
         e_h = flanks_given_h * neighbour_probability
 
-        return e_h * p_h
+        return e_h
 
     likelihoods = {h: bayes_theorem(h) for h in adj_abundances}
 
@@ -602,19 +599,38 @@ def recover(callspath: Path, reference: Path, genes: Path, jsondir: Path,
 
 def write_output(results, outpath: Path) -> None:
 
+    reformatted_results = {}
+
+    for strain in results:
+        reformatted_results[strain] = {}
+
+        for gene in results[strain]:
+            reformatted_results[strain][gene] = {}
+
+            for allele in results[strain][gene]:
+
+                allele_ = str(allele)  # JSON keys are converted to str anyway
+
+                prob = results[strain][gene][allele]
+                probability = None if np.isnan(prob) else float(prob)
+
+                reformatted_results[strain][gene][allele_] = probability
+
+
     out = outpath or sys.stdout
 
-    json.dump(results, out, indent=4, sort_keys=True)
+    json.dump(reformatted_results, out, indent=4)
+
 
 def main():
     """Main function. Gathers arguments and passes them to recover()"""
 
     args = arguments()
 
-    recover(args.calls, args.reference, args.genes, args.jsons, args.distances,
-            args.replicates, args.seed, args.cores)
+    results = recover(args.calls, args.reference, args.genes, args.jsons,
+                      args.distances, args.replicates, args.seed, args.cores)
 
-    write_output(args.output)
+    write_output(results, args.output)
 
 if __name__ == '__main__':
     main()
