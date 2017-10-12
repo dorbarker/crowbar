@@ -352,7 +352,7 @@ def flank_linkage(strain: str, gene: str, hypothesis: int, gene_abundances,
         try:
             is_h = (calls[gene] == hypothesis)
 
-            flanks_given_h = (has_flank & is_h).sum() / has_flank.sum()
+            flanks_given_h = (has_flank & is_h).sum() / is_h.sum()
 
             if math.isnan(flanks_given_h):
                 raise TypeError
@@ -612,14 +612,19 @@ def write_output(results, outpath: Path) -> None:
                 allele_ = str(allele)  # JSON keys are converted to str anyway
 
                 prob = results[strain][gene][allele]
-                probability = None if np.isnan(prob) else float(prob)
+                probability = -1 if np.isnan(prob) else float(prob)
 
                 reformatted_results[strain][gene][allele_] = probability
 
 
-    out = outpath or sys.stdout
+    if outpath is None:
 
-    json.dump(reformatted_results, out, indent=4)
+        json.dump(reformatted_results, sys.stdout, indent=4)
+
+    else:
+
+        with outpath.open('w') as out:
+            json.dump(reformatted_results, out, indent=4)
 
 
 def main():
