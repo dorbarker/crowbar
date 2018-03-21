@@ -205,10 +205,12 @@ def recover_simulated(strain: str, gene: str, calls: pd.DataFrame,
     probs = crowbar.recover_allele(strain, gene, calls, distances, genes,
                                    jsondir, gene_abundances)
 
+    probs = crowbar.redistribute_allele_probability(probs, set(calls[gene]))
 
     most_likely_allele = max(probs, key=lambda x: probs[x])
+    allele_prob = probs[most_likely_allele]
 
-    return most_likely_allele
+    return most_likely_allele, allele_prob
 
 @logtime('Recovery simulation')
 def simulate_recovery(truncation_probability: float,
@@ -218,7 +220,8 @@ def simulate_recovery(truncation_probability: float,
 
     def retrieve_results(result_dict):
 
-        cols = ['strain', 'gene', 'error', 'original', 'recovered', 'match']
+        cols = ['strain', 'gene', 'error', 'original',
+                'recovered', 'likelihood', 'match']
 
         data = []
 
@@ -226,7 +229,7 @@ def simulate_recovery(truncation_probability: float,
 
             for gene in result_dict[strain]:
 
-                recovered = result_dict[strain][gene]['recovered']
+                recovered, prob  = result_dict[strain][gene]['recovered']
                 original = result_dict[strain][gene]['original']
                 match = recovered == original
                 error = result_dict[strain][gene]['error']
@@ -236,7 +239,8 @@ def simulate_recovery(truncation_probability: float,
                              'error': error,
                              'recovered': recovered,
                              'original': original,
-                             'match': match})
+                             'likelihood': prob,
+                             'match': int(match)})
 
         data_df = pd.DataFrame(data, columns=cols)
         return data_df

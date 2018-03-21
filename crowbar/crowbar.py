@@ -127,7 +127,6 @@ def row_distance(idx: int, row, calls: pd.DataFrame) -> Dict[int, int]:
     return {j: non_missing_hamming(j) for j in range(idx + 1, len(calls))}
 
 
-
 def hamming_distance_matrix(distance_path: Optional[Path], calls: pd.DataFrame,
                             cores: int) -> np.matrix:
 
@@ -139,14 +138,12 @@ def hamming_distance_matrix(distance_path: Optional[Path], calls: pd.DataFrame,
     calculate the distance matrix and return it without saving to disk.
     """
 
-    def dist_gene(calls: pd.DataFrame, cores: int) -> np.matrix:
+    def dist_gene() -> np.matrix:
         """Returns a Hamming distance matrix of pairwise strain distances."""
 
         n_row = len(calls)
 
-        dist_mat = np.matrix([np.zeros(n_row)
-                              for _ in range(n_row)],
-                              dtype=int)
+        dist_mat = np.matrix([np.zeros(n_row) for _ in range(n_row)], dtype=int)
 
         calls_mat = calls.as_matrix()
 
@@ -163,7 +160,6 @@ def hamming_distance_matrix(distance_path: Optional[Path], calls: pd.DataFrame,
 
         return dist_mat
 
-
     try:
 
         distances = pd.read_csv(distance_path,
@@ -171,7 +167,7 @@ def hamming_distance_matrix(distance_path: Optional[Path], calls: pd.DataFrame,
 
     except FileNotFoundError:
 
-        distances = dist_gene(calls, cores)
+        distances = dist_gene()
 
         pd.DataFrame(distances,
                      index=calls.index,
@@ -179,12 +175,15 @@ def hamming_distance_matrix(distance_path: Optional[Path], calls: pd.DataFrame,
 
     except ValueError:
 
-        distances = dist_gene(calls, cores)
+        distances = dist_gene()
 
     return distances
 
+
 Neighbour = namedtuple('Neighbour', ('indices', 'alleles', 'similarity'))
-def nearest_neighbour(gene: str, strain: str, included_fragments: Set[int],
+
+
+def nearest_neighbour(gene: str, strain: str,  # included_fragments: Set[int],
                       distances: np.matrix, calls: pd.DataFrame) -> Neighbour:
     """Finds the nearest neighbour(s) to `strain`, and returns a Neighbour
     namedtuple containing the row indices in `calls` of its closest relatives,
@@ -200,14 +199,12 @@ def nearest_neighbour(gene: str, strain: str, included_fragments: Set[int],
 
         return sum(strain1[shared] == strain2[shared]) / len(shared)
 
-
     def which(data: Sequence, compared: NUMERIC) -> List[int]:
         """Returns the indices of `data` equal to `compared`"""
 
         return np.where(data == compared)[0]
 
-    def closest_relatives(strain: str, calls: pd.DataFrame,
-                          distances: np.matrix) -> List[int]:
+    def closest_relatives() -> List[int]:
         """Return the row indices of the closest relatives of `strain`."""
 
         strain_index = tuple(calls.index).index(strain)
@@ -228,9 +225,7 @@ def nearest_neighbour(gene: str, strain: str, included_fragments: Set[int],
 
         return closest
 
-
-    def closest_relative_allele(gene: str, closest_relative_indices,
-                                calls: pd.DataFrame) -> List[int]:
+    def closest_relative_allele(closest_relative_indices) -> List[int]:
         """For each of the genome indices specified by
         `closest_relative_indices`, return the allele found at `gene`.
         """
@@ -239,9 +234,9 @@ def nearest_neighbour(gene: str, strain: str, included_fragments: Set[int],
         return closest_relative_alleles
 
 
-    closest_indices = closest_relatives(strain, calls, distances)
+    closest_indices = closest_relatives()
 
-    closest_alleles = closest_relative_allele(gene, closest_indices, calls)
+    closest_alleles = closest_relative_allele(closest_indices)
 
     similarity = percent_shared(calls.loc[strain],
                                 calls.iloc[closest_indices[0]])
@@ -275,7 +270,6 @@ def find_locus_in_reference(gene: Path, reference: Path):
         start, stop = table_result.iloc[0, [8, 9]]
 
         return min(start, stop)
-
 
     gene_name = gene.stem
 
@@ -320,10 +314,8 @@ def flank_linkage(strain: str, gene: str, hypothesis: int, gene_abundances,
     Centre were associated with the flanking genes Left and Right.
     """
 
-
     possible = np.array([a for a in gene_abundances[gene].keys()
                          if a != '?'])
-
 
     columns = tuple(calls.columns)
     gene_loc = columns.index(gene)
@@ -371,7 +363,7 @@ def partial_sequence_match(strain: str, gene: str, genes: Path,
                            jsondir: Path) -> Set[int]:
     """Attempts to use partial sequence data to exclude possible alleles."""
 
-    def load_fragment(strain: str, gene: str, jsondir: Path) -> str:
+    def load_fragment() -> str:
 
         """Loads a partial nucleotide alignment from MIST-generated JSON
         output.
@@ -396,9 +388,8 @@ def partial_sequence_match(strain: str, gene: str, genes: Path,
 
         return fragment
 
-
-    def fragment_match(gene: str, fragment: str, genes: Path) -> Set[int]:
-        """Attemps to match partial sequence data to a known allele from
+    def fragment_match(fragment: str) -> Set[int]:
+        """Attempts to match partial sequence data to a known allele from
         a multifasta file. Matches are only attemped at the beginning and end
         of the gene.
         """
@@ -415,11 +406,12 @@ def partial_sequence_match(strain: str, gene: str, genes: Path,
 
         return result
 
-    fragment = load_fragment(strain, gene, jsondir)
+    fragment = load_fragment()
 
-    matches = fragment_match(gene, fragment, genes)
+    matches = fragment_match(fragment)
 
     return matches
+
 
 def allele_abundances(gene: str, calls: pd.DataFrame, replicates: int = 1000,
                       seed: int = 1) -> Dict[Union[str, int], float]:
@@ -451,7 +443,6 @@ def redistribute_allele_probability(abundances, fragment_matches):
     """Filters alleles ruled out by fragment matching and recalculates
     abundance proportions.
     """
-
 
     filtered_abundances = {k: v
                            for k, v in abundances.items()
@@ -490,7 +481,6 @@ def neighbour_similarities(neighbour: Neighbour,
 
 def bayes(adj_abundances, neighbour_probs, flanks) -> Dict[int, float]:
 
-
     def bayes_theorem(h: Union[str, int]) -> float:
         """Implementation of Bayes' Theorem in which the hypothesis being
         tested (h) is a given allele, and the lines of evidence are
@@ -513,6 +503,7 @@ def bayes(adj_abundances, neighbour_probs, flanks) -> Dict[int, float]:
     return {h: ((likelihoods[h] * adj_abundances[h]) / e)
             for h in adj_abundances}
 
+
 def recover_allele(strain: str, gene: str, calls: pd.DataFrame,
                    distances: np.matrix, genes: Path, jsondir: Path,
                    gene_abundances):
@@ -532,7 +523,6 @@ def recover_allele(strain: str, gene: str, calls: pd.DataFrame,
     else:  # is wholly missing
 
         fragment_matches = set(calls[gene]) - {0, -1}
-
 
     adj_abundances = redistribute_allele_probability(gene_abundances[gene],
                                                      fragment_matches)
@@ -558,7 +548,6 @@ def recover(callspath: Path, reference: Path, genes: Path, jsondir: Path,
     Walks through a pandas DataFrame of allele calls and attempts to recover
     any truncated (-1) or absent (0) loci.
     """
-
 
     results = {}  # Dict[str, Dict[str, Dict[int, float]
 
@@ -616,7 +605,6 @@ def write_output(results, outpath: Path) -> None:
 
                 reformatted_results[strain][gene][allele_] = probability
 
-
     if outpath is None:
 
         json.dump(reformatted_results, sys.stdout, indent=4)
@@ -636,6 +624,7 @@ def main():
                       args.distances, args.replicates, args.seed, args.cores)
 
     write_output(results, args.output)
+
 
 if __name__ == '__main__':
     main()
