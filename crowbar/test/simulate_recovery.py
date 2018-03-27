@@ -57,7 +57,7 @@ def arguments():
     parser.add_argument('--tempdir',
                         type=Path,
                         default=Path('/tmp'),
-                        help='Directory for emphermal working files')
+                        help='Directory for ephemeral working files')
 
     parser.add_argument('--replicates',
                         type=int,

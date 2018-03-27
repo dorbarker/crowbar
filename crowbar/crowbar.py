@@ -305,7 +305,7 @@ def order_on_reference(reference: Path, genes: Path, calls: pd.DataFrame,
 
     ordered_gene_names, ordered_locs = zip(*ordered_gene_locations)
 
-    return calls.reindex_axis(ordered_gene_names, axis=1)
+    return calls.reindex(ordered_gene_names, axis=1)
 
 
 def flank_linkage(strain: str, gene: str, hypothesis: int, gene_abundances,
@@ -527,7 +527,7 @@ def recover_allele(strain: str, gene: str, calls: pd.DataFrame,
     adj_abundances = redistribute_allele_probability(gene_abundances[gene],
                                                      fragment_matches)
 
-    neighbour = nearest_neighbour(gene, strain, fragment_matches,
+    neighbour = nearest_neighbour(gene, strain,  # fragment_matches,
                                   distances, calls)
 
     neighbour_probs = neighbour_similarities(neighbour, adj_abundances)
