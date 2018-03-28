@@ -7,7 +7,7 @@ import random
 from concurrent.futures import ProcessPoolExecutor
 from functools import partial
 from pathlib import Path
-from typing import Dict, Tuple, Union
+from typing import Dict, Optional, Tuple, Union
 # 3rd Party imports
 import pandas as pd
 import numpy as np
@@ -58,6 +58,11 @@ def arguments():
                         type=Path,
                         default=Path('/tmp'),
                         help='Directory for ephemeral working files')
+
+    parser.add_argument('--distances',
+                        type=Path,
+                        required=False,
+                        help='Path to pre-calculated distance matrix')
 
     parser.add_argument('--replicates',
                         type=int,
@@ -146,33 +151,26 @@ def modify_row(strain_row, trunc_prob, miss_prob, jsondir):
 
 
 def truncate(strain: str, gene: str, jsondir: Path) -> str:
+    """Loads a partial nucleotide alignment from MIST-generated JSON
+    output.
 
-    def load_fragment(strain: str, gene: str, jsondir: Path) -> str:
+    Currently, this function assumes that there is only one cgMLST test per
+    JSON file.
+    """
 
-        """Loads a partial nucleotide alignment from MIST-generated JSON
-        output.
+    jsonpath = (jsondir / strain).with_suffix('.json')
 
-        Currently, this function assumes that there is only one cgMLST test per
-        JSON file.
-        """
+    with jsonpath.open('r') as json_obj:
+        data = json.load(json_obj)
 
-        jsonpath = (jsondir / strain).with_suffix('.json')
+    test_results = data['Results'][0]['TestResults']
 
-        with jsonpath.open('r') as json_obj:
-            data = json.load(json_obj)
+    # presumed to be a single test name per file
+    test_name, *_ = test_results.keys()
 
-        test_results = data['Results'][0]['TestResults']
+    test_data = test_results[test_name]
 
-        # presumed to be a single test name per file
-        test_name, *_ = test_results.keys()
-
-        test_data = test_results[test_name]
-
-        fragment = test_data[gene]['Amplicon']
-
-        return fragment
-
-    sequence = load_fragment(strain, gene, jsondir)
+    sequence = test_data[gene]['Amplicon']
 
     # Leave at least a 50-mer on each end
     pivot = random.randint(50, len(sequence) - 50)
@@ -181,6 +179,7 @@ def truncate(strain: str, gene: str, jsondir: Path) -> str:
     halves = sequence[:pivot], sequence[:pivot]
 
     return halves[side]
+
 
 @logtime('Creating dummy JSONs')
 def create_dummy_jsons(truncations: TRUNCATIONS, tempdir: Path) -> None:
@@ -216,6 +215,7 @@ def recover_simulated(strain: str, gene: str, calls: pd.DataFrame,
 def simulate_recovery(truncation_probability: float,
                       missing_probability: float, calls: pd.DataFrame,
                       jsondir: Path, genes: Path, tempdir: Path,
+                      dist: Optional[Path],
                       seed: int, replicates: int, cores: int) -> pd.DataFrame:
 
     def retrieve_results(result_dict):
@@ -243,8 +243,8 @@ def simulate_recovery(truncation_probability: float,
                              'match': int(match)})
 
         data_df = pd.DataFrame(data, columns=cols)
-        return data_df
 
+        return data_df
 
     error_calls, truncations = random_errors(truncation_probability,
                                              missing_probability, calls,
@@ -252,7 +252,9 @@ def simulate_recovery(truncation_probability: float,
 
     create_dummy_jsons(truncations, tempdir)
 
-    distances = crowbar.hamming_distance_matrix(None, error_calls, cores)
+    distances = crowbar.hamming_distance_matrix(dist, error_calls, cores)
+
+    distances = np.matrix(pd.DataFrame(distances).loc[calls.index, calls.index])
 
     gene_abundances = crowbar.gene_allele_abundances(calls, replicates,
                                                      seed, cores)
@@ -304,6 +306,7 @@ def main():
 
     results = simulate_recovery(args.trunc_prob, args.miss_prob, calls,
                                 args.jsons, args.genes, args.tempdir,
+                                args.distances,
                                 args.seed, args.replicates, args.cores)
 
     summarize_results(results, args.output)
