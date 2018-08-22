@@ -28,6 +28,9 @@ TRIPLET_COUNTS = Dict[int, Dict[int, Dict[int, int]]]
 TRIPLET_PROBS = Dict[int, Dict[int, Dict[int, float]]]
 TRIPLET_COUNT_CURRENT = Tuple[TRIPLET_COUNTS, Dict[int, int]]
 NUMERIC = Union[int, float]
+ABUNDANCE = Dict[Union[str, int], float]
+
+Neighbour = namedtuple('Neighbour', ('indices', 'alleles', 'similarity'))
 
 
 def arguments():
@@ -103,9 +106,6 @@ def gene_allele_abundances(calls: pd.DataFrame, replicates: int,
     return abundances
 
 
-Neighbour = namedtuple('Neighbour', ('indices', 'alleles', 'similarity'))
-
-
 def nearest_neighbour(gene: str, strain: str,  # included_fragments: Set[int],
                       distances: np.matrix, calls: pd.DataFrame) -> Neighbour:
     """Finds the nearest neighbour(s) to `strain`, and returns a Neighbour
@@ -122,11 +122,6 @@ def nearest_neighbour(gene: str, strain: str,  # included_fragments: Set[int],
 
         return sum(strain1[shared] == strain2[shared]) / len(shared)
 
-    def which(data: Sequence, compared: NUMERIC) -> List[int]:
-        """Returns the indices of `data` equal to `compared`"""
-
-        return np.where(data == compared)[0]
-
     def closest_relatives() -> List[int]:
         """Return the row indices of the closest relatives of `strain`."""
 
@@ -140,11 +135,11 @@ def nearest_neighbour(gene: str, strain: str,  # included_fragments: Set[int],
 
         minimum_distance = min(non_self_distances)
 
-        closest_indices = which(strain_distances, minimum_distance)
+        indices = np.where(strain_distances == minimum_distance)[0]
 
         # If the minimum dist is 0, it will still match to self here,
         # so ensure the query index is not in the return value
-        closest = sorted(set(closest_indices) - {strain_index})
+        closest = sorted(set(indices) - {strain_index})
 
         return closest
 
@@ -155,7 +150,6 @@ def nearest_neighbour(gene: str, strain: str,  # included_fragments: Set[int],
         closest_relative_alleles = calls[gene].iloc[closest_relative_indices]
 
         return closest_relative_alleles
-
 
     closest_indices = closest_relatives()
 
@@ -169,9 +163,9 @@ def nearest_neighbour(gene: str, strain: str,  # included_fragments: Set[int],
     return neighbour
 
 
-def find_locus_in_reference(gene: Path, reference: Path):
+def find_locus_in_reference(gene: Path, reference: Path) -> Tuple[str, int]:
 
-    def find_locus_location(query: str) -> int:
+    def find_locus_location(seq: str) -> int:
         """Executes a BLASTn search for a core gene against a reference genome.
 
         Returns the minimum of the start and stop locations of the gene
@@ -182,7 +176,7 @@ def find_locus_in_reference(gene: Path, reference: Path):
                  '-outfmt', '10')
 
         string_result = subprocess.run(blast, universal_newlines=True,
-                                       check=True, input=query,
+                                       check=True, input=seq,
                                        stdout=subprocess.PIPE)
 
         table_result = pd.read_table(StringIO(string_result.stdout),
@@ -307,17 +301,15 @@ def partial_sequence_match(strain: str, gene: str, genes: Path,
 
         test_data = test_results[test_name]
 
-        fragment = test_data[gene]['Amplicon']
+        return test_data[gene]['Amplicon']
 
-        return fragment
-
-    def fragment_match(fragment: str) -> Set[int]:
+    def fragment_match(seq: str) -> Set[int]:
         """Attempts to match partial sequence data to a known allele from
         a multifasta file. Matches are only attemped at the beginning and end
         of the gene.
         """
 
-        fragment_pattern = re.compile('(^{seq})|({seq}$)'.format(seq=fragment))
+        fragment_pattern = re.compile('(^{seq})|({seq}$)'.format(seq=seq))
 
         glob_pattern = '*{}.f*'.format(gene)
         gene_file, *_ = genes.glob(glob_pattern)
@@ -337,7 +329,7 @@ def partial_sequence_match(strain: str, gene: str, genes: Path,
 
 
 def allele_abundances(gene: str, calls: pd.DataFrame, replicates: int = 1000,
-                      seed: int = 1) -> Dict[Union[str, int], float]:
+                      seed: int = 1) -> Tuple[str, ABUNDANCE]:
     """Calculates the abundances of alleles for a given gene and attempts to
     determine the probability that the next observation will be a new allele.
     """
