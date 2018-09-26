@@ -119,7 +119,7 @@ def nearest_neighbour(gene: str, strain: str,  # included_fragments: Set[int],
 
         shared = [a and b for a, b in zip(strain1 > 0, strain2 > 0)]
 
-        return sum(strain1[shared] == strain2[shared]) / len(shared)
+        return sum(strain1[shared] == strain2[shared]) / sum(shared)
 
     def closest_relatives() -> List[int]:
         """Return the row indices of the closest relatives of `strain`."""
