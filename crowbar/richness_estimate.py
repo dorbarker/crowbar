@@ -1,10 +1,10 @@
 import random
 from collections import Counter
-from functools import reduce
 from typing import Set, Sized
 import attr
 import pandas as pd
 import numpy as np
+
 
 @attr.s
 class Population(Sized):
@@ -19,12 +19,12 @@ class Population(Sized):
         self.abundance = Counter(self.alleles)
 
     def monte_carlo(self, replicates: int, seed: int = 1) -> np.ndarray:
-        '''Monte Carlo estimation of the probability of finding a new class
+        """Monte Carlo estimation of the probability of finding a new class
         on the next sampling.
 
-        Returns a pandas Series of the proportion replicates for which each
+        Returns a numpy ndarray of the proportion replicates for which each
         observation yielded a new class
-        '''
+        """
 
         random.seed(seed)  # for reproducibility
 
@@ -50,15 +50,14 @@ class Population(Sized):
 
         return percent_new_allele
 
-
     def proportion_successes(self) -> float:
-        '''Returns the probability of an individual representing a new class
+        """Returns the probability of an individual representing a new class
         given previous discovery rate of new classes
-        '''
+        """
         return len(set(self.alleles)) / len(self.alleles)
 
     def chao1(self) -> float:
-        '''Implementation of the Chao 1 estimator
+        """Implementation of the Chao 1 estimator
 
         Nonparametric Estimation of the Number of Classes in a Population
         Anne Chao, 1984
@@ -67,7 +66,7 @@ class Population(Sized):
         https://www.uvm.edu/~ngotelli/manuscriptpdfs/Chapter%204.pdf
 
         Returns the estimated number of classes in a population
-        '''
+        """
 
         n_observed = len(set(self.alleles))
 
@@ -80,7 +79,7 @@ class Population(Sized):
         return n_observed + ((f_1 * (f_1 - 1)) / (2 * (f_2 + 1)))
 
     def ace(self) -> float:
-        '''Implementation of the abundace-based coverage estimator (ACE)
+        """Implementation of the abundace-based coverage estimator (ACE)
         of species richness
 
         Nonparametric Prediction in Species Sampling
@@ -90,20 +89,20 @@ class Population(Sized):
         https://www.uvm.edu/~ngotelli/manuscriptpdfs/Chapter%204.pdf
 
         Returns the estimated number of classes in a population
-        '''
-
-        n_observed = len(set(self.alleles))
+        """
 
         abundance_counts = pd.Series(list(self.abundance.values()))
 
         rare_range = list(range(1, 11))  # 1-10
-        abund_range = list(range(11, max(abundance_counts) + 1))
 
-        s_rare = sum(abundance_counts <= 10)
+        rare = abundance_counts <= 10
+        common = abundance_counts > 10
 
-        s_abund = sum(abundance_counts > 10)
+        s_rare = sum(rare)
 
-        n_rare = sum(abundance_counts[abundance_counts <= 10])
+        s_abund = sum(common)
+
+        n_rare = sum(abundance_counts[rare])
 
         if n_rare == sum(abundance_counts[abundance_counts == 1]):
             msg = 'ACE is undefined when all rare species are singletons'
@@ -115,13 +114,11 @@ class Population(Sized):
         k2 = ((k * (k - 1)) * sum(abundance_counts == k)
               for k in rare_range)
 
-
         y_ace = ((s_rare / c_ace) * (sum(k2) / (n_rare * (n_rare - 1)))) - 1
 
         y_ace = max(y_ace, 0)
 
-        s_ace = s_abund + (s_rare / c_ace) + \
-                ((singletons / c_ace) * y_ace)
+        s_ace = s_abund + (s_rare / c_ace) + ((singletons / c_ace) * y_ace)
 
         return s_ace
 
