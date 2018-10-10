@@ -16,7 +16,7 @@ up = os.path.abspath(os.path.join(os.path.dirname(__file__), os.path.pardir))
 sys.path.append(up)
 
 import crowbar  # main script
-from shared import logtime
+from shared import logtime, hamming_distance_matrix
 
 # Complex types
 TRUNCATIONS = Dict[str, Dict[str, str]]
@@ -61,7 +61,7 @@ def arguments():
 
     parser.add_argument('--distances',
                         type=Path,
-                        required=False,
+                        required=True,
                         help='Path to pre-calculated distance matrix')
 
     parser.add_argument('--replicates',
@@ -211,11 +211,28 @@ def recover_simulated(strain: str, gene: str, calls: pd.DataFrame,
 
     return most_likely_allele, allele_prob
 
+
+@logtime('Getting distance matrix')
+def get_distances(dist: Path, calls: pd.DataFrame,
+                  cores: int) -> np.matrix:
+
+
+    raw_distances = hamming_distance_matrix(dist, calls, cores)
+
+    indices = pd.read_csv(dist, index_col=0, header=0).index
+
+    mod_distances = pd.DataFrame(raw_distances, index=indices, columns=indices)
+
+    distances = np.matrix(mod_distances.loc[calls.index, calls.index])
+
+    return distances
+
+
 @logtime('Recovery simulation')
 def simulate_recovery(truncation_probability: float,
                       missing_probability: float, calls: pd.DataFrame,
                       jsondir: Path, genes: Path, tempdir: Path,
-                      dist: Optional[Path],
+                      distpath: Optional[Path],
                       seed: int, replicates: int, cores: int) -> pd.DataFrame:
 
     def retrieve_results(result_dict):
@@ -252,9 +269,7 @@ def simulate_recovery(truncation_probability: float,
 
     create_dummy_jsons(truncations, tempdir)
 
-    distances = crowbar.hamming_distance_matrix(dist, error_calls, cores)
-
-    distances = np.matrix(pd.DataFrame(distances).loc[calls.index, calls.index])
+    distances = get_distances(distpath, error_calls, cores)
 
     gene_abundances = crowbar.gene_allele_abundances(calls, replicates,
                                                      seed, cores)

@@ -8,11 +8,11 @@ import sys
 import warnings
 from collections import Counter, namedtuple
 from concurrent.futures import ProcessPoolExecutor
-from functools import partial, reduce
+from functools import partial
 from io import StringIO
 from pathlib import Path
 from statistics import mean
-from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple, Union
+from typing import Dict, List, Optional, Set, Tuple, Union
 
 # Third-party imports
 import pandas as pd
@@ -26,7 +26,6 @@ from shared import user_msg, logtime, hamming_distance_matrix
 # Complex type constants
 TRIPLET_COUNTS = Dict[int, Dict[int, Dict[int, int]]]
 TRIPLET_PROBS = Dict[int, Dict[int, Dict[int, float]]]
-TRIPLET_COUNT_CURRENT = Tuple[TRIPLET_COUNTS, Dict[int, int]]
 NUMERIC = Union[int, float]
 ABUNDANCE = Dict[Union[str, int], float]
 
@@ -120,7 +119,7 @@ def nearest_neighbour(gene: str, strain: str,  # included_fragments: Set[int],
 
         shared = [a and b for a, b in zip(strain1 > 0, strain2 > 0)]
 
-        return sum(strain1[shared] == strain2[shared]) / len(shared)
+        return sum(strain1[shared] == strain2[shared]) / sum(shared)
 
     def closest_relatives() -> List[int]:
         """Return the row indices of the closest relatives of `strain`."""
@@ -231,14 +230,14 @@ def flank_linkage(strain: str, gene: str, hypothesis: int, gene_abundances,
     Centre were associated with the flanking genes Left and Right.
     """
 
-    possible = np.array([a for a in gene_abundances[gene].keys()
-                         if a != '?'])
+    possible = np.array([a for a in gene_abundances[gene].keys() if a != '?'])
 
     columns = tuple(calls.columns)
     gene_loc = columns.index(gene)
 
     left_col = columns[gene_loc - 1]
 
+    # Wrap around if the centre gene is already the rightmost column
     try:
         right_col = columns[gene_loc + 1]
     except IndexError:
@@ -281,12 +280,9 @@ def partial_sequence_match(strain: str, gene: str, genes: Path,
     """Attempts to use partial sequence data to exclude possible alleles."""
 
     def load_fragment() -> str:
+        """Loads a partial nucleotide alignment from FSAC-generated JSON output.
 
-        """Loads a partial nucleotide alignment from MIST-generated JSON
-        output.
-
-        Currently, this function assumes that there is only one cgMLST test per
-        JSON file.
+        :return: A partial gene alignment as a str
         """
 
         jsonpath = (jsondir / strain).with_suffix('.json')
@@ -294,14 +290,7 @@ def partial_sequence_match(strain: str, gene: str, genes: Path,
         with jsonpath.open('r') as json_obj:
             data = json.load(json_obj)
 
-        test_results = data['Results'][0]['TestResults']
-
-        # presumed to be a single test name per file
-        test_name, *_ = test_results.keys()
-
-        test_data = test_results[test_name]
-
-        return test_data[gene]['Amplicon']
+        return data[gene]['SubjAln']
 
     def fragment_match(seq: str) -> Set[int]:
         """Attempts to match partial sequence data to a known allele from
@@ -334,20 +323,30 @@ def allele_abundances(gene: str, calls: pd.DataFrame, replicates: int = 1000,
     determine the probability that the next observation will be a new allele.
     """
 
+    def account_for_unknown(freq: int, observations: int,
+                            unknown: float) -> float:
+
+        return (freq / observations) - unknown
+
     observed_alleles = richness_estimate.Population(calls[gene])
 
     n_alleles = len(observed_alleles.abundance)
 
     discoveries = observed_alleles.monte_carlo(replicates, seed)
 
-    last_percentile = max(1, int(0.01 * len(observed_alleles)))
+    last_percentile = max(1, int(0.01 * len(discoveries)))
 
     last_percentile_discovery_rate = mean(discoveries[-last_percentile:])
 
     to_subtract_from_known = last_percentile_discovery_rate / n_alleles
 
-    abundance = {k: ((v / len(observed_alleles)) - to_subtract_from_known)
-                 for k, v in observed_alleles.abundance.items()}
+    account_for_unknown_ = partial(account_for_unknown,
+                                   observations=len(observed_alleles),
+                                   unknown=to_subtract_from_known)
+
+    abundance = {allele: account_for_unknown_(frequency)
+                 for allele, frequency
+                 in observed_alleles.abundance.items()}
 
     abundance['?'] = last_percentile_discovery_rate
 
