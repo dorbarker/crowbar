@@ -1,9 +1,12 @@
 import argparse
 import shutil
 import collections
+import json
 from pathlib import Path
-
+from typing import Dict
 import pandas as pd
+
+Abundance = Dict[str, Dict[str, int]]
 
 
 def arguments():
@@ -54,7 +57,16 @@ def save_known_alleles(alleles_dir: Path, model_path: Path) -> None:
         shutil.copy(fasta, dst)
 
 
-def calculate_abundances(calls: pd.DataFrame):
+def calculate_abundances(calls: pd.DataFrame) -> Abundance:
+    """Calculate the absolute abundances of non-missing alleles for each gene
+    in the calls table. Also treat add an unknown allele represented by '?'
+    with a frequency of 1.
+
+    :param calls:   A dataframe of allele calls with each
+                    row a strain and each column a gene.
+
+    :return:        A dictionary of allele frequencies for each gene.
+    """
 
     abundances = {}
 
@@ -62,17 +74,22 @@ def calculate_abundances(calls: pd.DataFrame):
 
         present = alleles[alleles > 0]
 
-        inc_unknown = list(present) + ['?']
+        inc_unknown = [str(x) for x in present] + ['?']
 
         frequencies = collections.Counter(inc_unknown)
 
-        abundances[gene] = frequencies
+        abundances[gene] = dict(frequencies)  # simplify for later JSON
 
     return abundances
 
 
-def save_abundances():
-    ...
+def save_abundances(abundances: Abundance, model_path: Path) -> None:
+    """Saves allele abundance data as a JSON-formatted file."""
+
+    abundance_path = model_path / 'allele_abundances.json'
+
+    with abundance_path.open('w') as f:
+        json.dump(abundances, f, indent=4)
 
 
 def calculate_distance_matrix():
