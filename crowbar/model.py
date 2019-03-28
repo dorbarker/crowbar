@@ -1,6 +1,6 @@
 import argparse
 import shutil
-
+import collections
 from pathlib import Path
 
 import pandas as pd
@@ -54,8 +54,21 @@ def save_known_alleles(alleles_dir: Path, model_path: Path) -> None:
         shutil.copy(fasta, dst)
 
 
-def calculate_abundances():
-    ...
+def calculate_abundances(calls: pd.DataFrame):
+
+    abundances = {}
+
+    for gene, alleles in calls.iteritems():
+
+        present = alleles[alleles > 0]
+
+        inc_unknown = list(present) + ['?']
+
+        frequencies = collections.Counter(inc_unknown)
+
+        abundances[gene] = frequencies
+
+    return abundances
 
 
 def save_abundances():
