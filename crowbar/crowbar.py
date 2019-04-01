@@ -167,11 +167,9 @@ def flank_linkage(strain: str, gene: str, hypothesis: int, gene_abundances,
     return flanks_given_h or gene_abundances[gene]['?']
 
 
-def partial_sequence_match(strain: str, gene: str, genes: Path,
-                           jsondir: Path) -> Set[int]:
+def partial_sequence_match(gene: str, genes: Path, jsonpath: Path) -> Set[int]:
     """Attempts to use partial sequence data to exclude possible alleles."""
 
-    jsonpath = (jsondir / strain).with_suffix('.json')
 
     with jsonpath.open('r') as json_obj:
         data = json.load(json_obj)
