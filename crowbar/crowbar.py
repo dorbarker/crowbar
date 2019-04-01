@@ -167,7 +167,7 @@ def flank_linkage(strain: str, gene: str, hypothesis: int, gene_abundances,
     return flanks_given_h or gene_abundances[gene]['?']
 
 
-def partial_sequence_match(gene: str, genes: Path, jsonpath: Path) -> Set[int]:
+def partial_sequence_match(gene: str, genes: Path, jsonpath: Path) -> Set[str]:
     """Attempts to use partial sequence data to exclude possible alleles."""
 
 
@@ -183,44 +183,32 @@ def partial_sequence_match(gene: str, genes: Path, jsonpath: Path) -> Set[int]:
 
     with gene_file.open('r') as fasta:
 
-        matches= set(int(rec.id) for rec in SeqIO.parse(fasta, 'fasta')
-                     if re.search(fragment_pattern, str(rec.seq)))
+        matches = set(rec.id for rec in SeqIO.parse(fasta, 'fasta')
+                      if re.search(fragment_pattern, str(rec.seq)))
 
     return matches
 
 
-def allele_abundances(gene: str, calls: pd.DataFrame, replicates: int = 1000,
-                      seed: int = 1) -> Tuple[str, ABUNDANCE]:
+def allele_abundances(gene: str, partial_matches: Set[str], model_path: Path):
     """Calculates the abundances of alleles for a given gene and attempts to
     determine the probability that the next observation will be a new allele.
     """
 
-    def account_for_unknown(freq: int, observations: int,
-                            unknown: float) -> float:
+    abundance_path = model_path / 'abundances.json'
 
-        return (freq / observations) - unknown
+    with abundance_path.open('r') as f:
+        data = json.load(f)
 
-    observed_alleles = richness_estimate.Population(calls[gene])
+    model_abundances = data[gene]
 
-    n_alleles = len(observed_alleles.abundance)
+    possible_abundance = {allele: count
+                          for allele, count in model_abundances.items()
+                          if allele in partial_matches or allele == '?'}
 
-    discoveries = observed_alleles.monte_carlo(replicates, seed)
+    total_observations = sum(possible_abundance.values())
 
-    last_percentile = max(1, int(0.01 * len(discoveries)))
-
-    last_percentile_discovery_rate = mean(discoveries[-last_percentile:])
-
-    to_subtract_from_known = last_percentile_discovery_rate / n_alleles
-
-    account_for_unknown_ = partial(account_for_unknown,
-                                   observations=len(observed_alleles),
-                                   unknown=to_subtract_from_known)
-
-    abundance = {allele: account_for_unknown_(frequency)
-                 for allele, frequency
-                 in observed_alleles.abundance.items()}
-
-    abundance['?'] = last_percentile_discovery_rate
+    abundance = {allele: count / total_observations
+                 for allele, count in possible_abundance}
 
     return gene, abundance
 
