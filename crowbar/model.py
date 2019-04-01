@@ -4,12 +4,12 @@ import collections
 import itertools
 import json
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Tuple
 import pandas as pd
 
 import wallace
 Abundance = Dict[str, Dict[str, int]]
-
+Triplets = Dict[str, Dict[str, Tuple[str, float]]]
 
 def arguments():
 
@@ -35,7 +35,13 @@ def load_calls(calls_path: Path) -> pd.DataFrame:
     return calls
 
 
-def reorder_calls():
+def generate_copartitioning_triplets(calls: pd.DataFrame) -> Triplets:
+    """For each gene, find the other two genes that partition the population
+    most similarly to that gene.
+
+    :param calls:   DataFrame containing allele calls
+    :return:        Dictionary of type Triplets
+    """
 
     wallaces = {}
 
@@ -51,9 +57,17 @@ def reorder_calls():
         except KeyError:
             wallaces[geneA] = {geneB: adj_wallace_value}
 
+    triplets = {}
 
+    for geneA in wallaces:
 
+        values = [(geneB, wallaces[geneB][geneA]) for geneB in wallaces[geneA]]
 
+        best, second, *_ = sorted(values, key=lambda x: x[1], reverse=True)
+
+        triplets[geneA] = {'best': best, 'second': second}
+
+    return triplets
 
 
 def save_calls(calls: pd.DataFrame, model_path: Path) -> None:
