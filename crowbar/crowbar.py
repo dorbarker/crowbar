@@ -1,4 +1,5 @@
 import argparse
+import itertools
 import json
 import re
 import math
@@ -20,7 +21,6 @@ import numpy as np
 from Bio import SeqIO
 
 # Local imports
-import richness_estimate
 from shared import user_msg, logtime, hamming_distance_matrix
 
 # Complex type constants
@@ -83,30 +83,8 @@ def arguments():
     return parser.parse_args()
 
 
-def gene_allele_abundances(calls: pd.DataFrame, replicates: int,
-                           seed: int, cores: int) -> Dict[str, float]:
-    """Get the allele probabilities, including the those of a novel allele,
-    for every gene in `calls`.
-
-    Runs in parallel.
-    """
-
-    query_genes = calls.apply(lambda col: any(col < 1), axis=0).keys()
-
-    with ProcessPoolExecutor(max_workers=cores) as ppe:
-
-        get_allele_abundances = partial(allele_abundances,
-                                        calls=calls,
-                                        replicates=replicates,
-                                        seed=seed)
-
-        abundances = dict(ppe.map(get_allele_abundances, query_genes))
-
-    return abundances
-
-
-def nearest_neighbour(gene: str, strain: str,  # included_fragments: Set[int],
-                      distances: np.matrix, calls: pd.DataFrame) -> Neighbour:
+def nearest_neighbour(gene: str, strain_profile: pd.Series,
+                      model_calls: pd.DataFrame) -> Neighbour:
     """Finds the nearest neighbour(s) to `strain`, and returns a Neighbour
     namedtuple containing the row indices in `calls` of its closest relatives,
     the allele(s) present at `gene`, and their percent Hamming similarity.
@@ -121,45 +99,21 @@ def nearest_neighbour(gene: str, strain: str,  # included_fragments: Set[int],
 
         return sum(strain1[shared] == strain2[shared]) / sum(shared)
 
-    def closest_relatives() -> List[int]:
-        """Return the row indices of the closest relatives of `strain`."""
 
-        strain_index = tuple(calls.index).index(strain)
-        strain_distances = np.array(distances[strain_index].flat)
+    similarities = [(row_strain, percent_shared(strain_profile, row_profile))
+                    for row_strain, row_profile in model_calls.iterrows()]
 
-        not_self = [strain_distances[:strain_index],
-                    strain_distances[strain_index + 1:]]
+    sorted_similarities = reversed(sorted(similarities, key=lambda x: x[1]))
 
-        non_self_distances = np.concatenate(not_self)
+    max_similarity = sorted_similarities[0][1]
 
-        minimum_distance = min(non_self_distances)
+    neighbours = itertools.takewhile(lambda x: x[1] == max_similarity,
+                                     sorted_similarities)
 
-        indices = np.where(strain_distances == minimum_distance)[0]
+    neighbouring_alleles = [(model_calls.loc[row_strain, gene], similarity)
+                            for row_strain, similarity in neighbours]
 
-        # If the minimum dist is 0, it will still match to self here,
-        # so ensure the query index is not in the return value
-        closest = sorted(set(indices) - {strain_index})
-
-        return closest
-
-    def closest_relative_allele(closest_relative_indices) -> List[int]:
-        """For each of the genome indices specified by
-        `closest_relative_indices`, return the allele found at `gene`.
-        """
-        closest_relative_alleles = calls[gene].iloc[closest_relative_indices]
-
-        return closest_relative_alleles
-
-    closest_indices = closest_relatives()
-
-    closest_alleles = closest_relative_allele(closest_indices)
-
-    similarity = percent_shared(calls.loc[strain],
-                                calls.iloc[closest_indices[0]])
-
-    neighbour = Neighbour(closest_indices, closest_alleles, similarity)
-
-    return neighbour
+    return neighbouring_alleles
 
 
 def find_locus_in_reference(gene: Path, reference: Path) -> Tuple[str, int]:
@@ -199,29 +153,6 @@ def find_locus_in_reference(gene: Path, reference: Path) -> Tuple[str, int]:
         loc = find_locus_location(query)
 
     return gene_name, loc
-
-
-def order_on_reference(reference: Path, genes: Path, calls: pd.DataFrame,
-                       cores: int) -> pd.DataFrame:
-    """Reorders `calls` columns to reflect the gene order found in `reference`.
-
-    This is to facilitate analysis of gene linkage.
-    """
-
-    fasta_files = (gene for gene in genes.glob('*.fasta')
-                   if gene.stem in calls.columns)
-
-    with ProcessPoolExecutor(max_workers=cores) as ppe:
-
-        find_locus = partial(find_locus_in_reference, reference=reference)
-
-        gene_locations = list(ppe.map(find_locus, fasta_files))
-
-    ordered_gene_locations = sorted(gene_locations, key=operator.itemgetter(1))
-
-    ordered_gene_names, ordered_locs = zip(*ordered_gene_locations)
-
-    return calls.reindex(ordered_gene_names, axis=1)
 
 
 def flank_linkage(strain: str, gene: str, hypothesis: int, gene_abundances,
