@@ -84,7 +84,7 @@ def arguments():
 
 
 def nearest_neighbour(gene: str, strain_profile: pd.Series,
-                      model_calls: pd.DataFrame) -> Neighbour:
+                      model_calls: pd.DataFrame) -> List[Tuple[int, float]]:
     """Finds the nearest neighbour(s) to `strain`, and returns a Neighbour
     namedtuple containing the row indices in `calls` of its closest relatives,
     the allele(s) present at `gene`, and their percent Hamming similarity.
@@ -114,45 +114,6 @@ def nearest_neighbour(gene: str, strain_profile: pd.Series,
                             for row_strain, similarity in neighbours]
 
     return neighbouring_alleles
-
-
-def find_locus_in_reference(gene: Path, reference: Path) -> Tuple[str, int]:
-
-    def find_locus_location(seq: str) -> int:
-        """Executes a BLASTn search for a core gene against a reference genome.
-
-        Returns the minimum of the start and stop locations of the gene
-        so that gene calls can be ordered relative to the reference genome.
-        """
-
-        blast = ('blastn', '-task', 'megablast', '-subject', str(reference),
-                 '-outfmt', '10')
-
-        string_result = subprocess.run(blast, universal_newlines=True,
-                                       check=True, input=seq,
-                                       stdout=subprocess.PIPE)
-
-        table_result = pd.read_table(StringIO(string_result.stdout),
-                                     sep=',', header=None)
-
-        # best row should be first
-        # sstart, ssend = 8, 9
-        start, stop = table_result.iloc[0, [8, 9]]
-
-        return min(start, stop)
-
-    gene_name = gene.stem
-
-    with gene.open('r') as fasta:
-
-        # Use just the first record
-        rec = next(SeqIO.parse(fasta, 'fasta'))
-
-        query = str(rec.seq)
-
-        loc = find_locus_location(query)
-
-    return gene_name, loc
 
 
 def flank_linkage(strain: str, gene: str, hypothesis: int, gene_abundances,
