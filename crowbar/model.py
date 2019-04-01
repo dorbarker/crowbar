@@ -116,13 +116,13 @@ def calculate_abundances(calls: pd.DataFrame) -> Abundance:
     return abundances
 
 
-def save_abundances(abundances: Abundance, model_path: Path) -> None:
-    """Saves allele abundance data as a JSON-formatted file."""
+def write_json(values: Dict, name: str, model_path: Path) -> None:
+    """Saves dictionary data as a JSON-formatted file."""
 
-    abundance_path = model_path / 'allele_abundances.json'
+    output_path = model_path / name
 
-    with abundance_path.open('w') as f:
-        json.dump(abundances, f, indent=4)
+    with output_path.open('w') as f:
+        json.dump(values, f, indent=4)
 
 
 def calculate_distance_matrix(calls_path: Path, model_path: Path) -> None:
