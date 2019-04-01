@@ -15,15 +15,47 @@ def arguments():
 
     parser = argparse.ArgumentParser()
 
+    parser.add_argument('--calls',
+                        type=Path,
+                        required=True,
+                        help='Path to allele calls table')
+
+    parser.add_argument('--alleles-dir',
+                        type=Path,
+                        required=True,
+                        help='Path to directory containing gene FASTAs')
+
+    parser.add_argument('--output',
+                        type=Path,
+                        required=True,
+                        help='Directory containing model')
+
     return parser.parse_args()
 
 
 def main():
-    ...
+
+    args = arguments()
+
+    calls = load_calls(args.calls)
+
+    build_model(calls, args.alleles_dir, args.output)
 
 
-def build_model():
-    ...
+def build_model(calls: pd.DataFrame, alleles_dir: Path, model_path: Path):
+
+    model_path.mkdir(exists_ok=True, parents=True)
+
+    save_calls(calls, model_path)
+
+    save_known_alleles(alleles_dir, model_path)
+
+    triplets = generate_copartitioning_triplets(calls)
+
+    abundances = calculate_abundances(calls)
+
+    write_json(triplets, 'triplets.json', model_path)
+    write_json(abundances, 'abundances.json', model_path)
 
 
 def load_calls(calls_path: Path) -> pd.DataFrame:
@@ -37,7 +69,8 @@ def load_calls(calls_path: Path) -> pd.DataFrame:
 
 def generate_copartitioning_triplets(calls: pd.DataFrame) -> Triplets:
     """For each gene, find the other two genes that partition the population
-    most similarly to that gene.
+    most similarly to that gene. Uses the Adjusted Wallace Coefficient to
+    determine the most similar genes.
 
     :param calls:   DataFrame containing allele calls
     :return:        Dictionary of type Triplets
@@ -72,7 +105,9 @@ def generate_copartitioning_triplets(calls: pd.DataFrame) -> Triplets:
 
 def save_calls(calls: pd.DataFrame, model_path: Path) -> None:
 
-    calls.to_csv(model_path)
+    calls_path = model_path / 'calls.csv'
+
+    calls.to_csv(calls_path)
 
 
 def save_known_alleles(alleles_dir: Path, model_path: Path) -> None:
@@ -134,6 +169,7 @@ def calculate_distance_matrix(calls_path: Path, model_path: Path) -> None:
     :param calls_path: Path to the input allele calls
     :param model_path: Directory containing the model
     """
+
     cmd = ('hamming', '--input', str(calls_path), '--output', str(model_path))
 
     subprocess.run(cmd, check=True)
