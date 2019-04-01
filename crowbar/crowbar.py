@@ -171,40 +171,22 @@ def partial_sequence_match(strain: str, gene: str, genes: Path,
                            jsondir: Path) -> Set[int]:
     """Attempts to use partial sequence data to exclude possible alleles."""
 
-    def load_fragment() -> str:
-        """Loads a partial nucleotide alignment from FSAC-generated JSON output.
+    jsonpath = (jsondir / strain).with_suffix('.json')
 
-        :return: A partial gene alignment as a str
-        """
+    with jsonpath.open('r') as json_obj:
+        data = json.load(json_obj)
 
-        jsonpath = (jsondir / strain).with_suffix('.json')
+    fragment = data[gene]['SubjAln']
 
-        with jsonpath.open('r') as json_obj:
-            data = json.load(json_obj)
+    fragment_pattern = re.compile('(^{seq})|({seq}$)'.format(seq=fragment))
 
-        return data[gene]['SubjAln']
+    glob_pattern = '*{}.f*'.format(gene)
+    gene_file, *_ = genes.glob(glob_pattern)
 
-    def fragment_match(seq: str) -> Set[int]:
-        """Attempts to match partial sequence data to a known allele from
-        a multifasta file. Matches are only attemped at the beginning and end
-        of the gene.
-        """
+    with gene_file.open('r') as fasta:
 
-        fragment_pattern = re.compile('(^{seq})|({seq}$)'.format(seq=seq))
-
-        glob_pattern = '*{}.f*'.format(gene)
-        gene_file, *_ = genes.glob(glob_pattern)
-
-        with gene_file.open('r') as fasta:
-
-            result = set(int(rec.id) for rec in SeqIO.parse(fasta, 'fasta')
-                         if re.search(fragment_pattern, str(rec.seq)))
-
-        return result
-
-    fragment = load_fragment()
-
-    matches = fragment_match(fragment)
+        matches= set(int(rec.id) for rec in SeqIO.parse(fasta, 'fasta')
+                     if re.search(fragment_pattern, str(rec.seq)))
 
     return matches
 
