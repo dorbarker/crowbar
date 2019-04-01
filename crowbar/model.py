@@ -1,11 +1,13 @@
 import argparse
 import shutil
 import collections
+import itertools
 import json
 from pathlib import Path
 from typing import Dict
 import pandas as pd
 
+import wallace
 Abundance = Dict[str, Dict[str, int]]
 
 
@@ -34,7 +36,24 @@ def load_calls(calls_path: Path) -> pd.DataFrame:
 
 
 def reorder_calls():
-    ...
+
+    wallaces = {}
+
+    pairwise_calls = itertools.permutations(calls.iteritems(), r=2)
+
+    for (geneA, allelesA), (geneB, allelesB) in pairwise_calls:
+
+        adj_wallace_value = wallace.adj_wallace(allelesA, allelesB)
+
+        try:
+            wallaces[geneA][geneB] = adj_wallace_value
+
+        except KeyError:
+            wallaces[geneA] = {geneB: adj_wallace_value}
+
+
+
+
 
 
 def save_calls(calls: pd.DataFrame, model_path: Path) -> None:
@@ -92,12 +111,18 @@ def save_abundances(abundances: Abundance, model_path: Path) -> None:
         json.dump(abundances, f, indent=4)
 
 
-def calculate_distance_matrix():
-    ...
+def calculate_distance_matrix(calls_path: Path, model_path: Path) -> None:
+    """Calculates a hamming distance matrix using the external `hamming` tool.
+    https://gitlab.com/dorbarker/hamming
 
+    cargo install --git https://gitlab.com/dorbarker/hamming.git
 
-def save_distance_matrix():
-    ...
+    :param calls_path: Path to the input allele calls
+    :param model_path: Directory containing the model
+    """
+    cmd = ('hamming', '--input', str(calls_path), '--output', str(model_path))
+
+    subprocess.run(cmd, check=True)
 
 
 if __name__ == '__main__':
