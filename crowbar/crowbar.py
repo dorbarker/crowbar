@@ -116,55 +116,51 @@ def nearest_neighbour(gene: str, strain_profile: pd.Series,
     return neighbouring_alleles
 
 
-def flank_linkage(strain: str, gene: str, hypothesis: int, gene_abundances,
-                  calls: pd.DataFrame) -> Tuple[float, float]:
-    """For three genes, (Left, Centre, Right), count how many observations of
-    Centre were associated with the flanking genes Left and Right.
-    """
+def flank_linkage(strain_profile: pd.Series, gene: str, model_path: Path,
+                  abundances: Dict, calls: pd.DataFrame) -> Dict[str, float]:
 
-    possible = np.array([a for a in gene_abundances[gene].keys() if a != '?'])
+    triplet_path = model_path / 'triplets.json'
+    with triplet_path.open('r') as f:
+        data = json.load(f)
 
-    columns = tuple(calls.columns)
-    gene_loc = columns.index(gene)
+    best_predictor_gene = data[gene]['best']
+    second_predictor_gene = data[gene]['second']
 
-    left_col = columns[gene_loc - 1]
+    best_calls = calls[best_predictor_gene]
+    second_calls = calls[second_predictor_gene]
+    query_calls = calls[gene]
 
-    # Wrap around if the centre gene is already the rightmost column
-    try:
-        right_col = columns[gene_loc + 1]
-    except IndexError:
-        right_col = columns[0]
+    possible = np.array(abundances.keys())
 
-    flank_left, flank_right = calls[[left_col, right_col]].loc[strain]
+    strain_best_predictor = strain_profile[best_predictor_gene]
+    strain_second_predictor = strain_profile[second_predictor_gene]
 
-    left = np.array(calls[left_col])
-    rght = np.array(calls[right_col])
-    cntr = np.array(calls[gene])
+    predictions = (best_calls == strain_best_predictor)     & \
+                  (second_calls == strain_second_predictor) & \
+                  (np.isin(query_calls, possible))
 
-    has_flank = (left == flank_left) & \
-                (rght == flank_right) & \
-                (np.isin(cntr, possible))
+    triplet_probabilities = {}
 
-    with warnings.catch_warnings():
+    for hypothesis in possible:
 
-        warnings.simplefilter('ignore')
+        if hypothesis not in query_calls:
+            # If hypothesis is *never* observed with these predictors,
+            # it's not impossible - merely unlikely.
+            #
+            # Use the probability of an unobserved allele
+            # as the base probability.
 
-        try:
+            triplet_probabilities[hypothesis] = abundances['?']
+
+        else:
+
             is_h = (calls[gene] == hypothesis)
 
-            flanks_given_h = (has_flank & is_h).sum() / is_h.sum()
+            predictors_given_h = (has_predictors & is_h).sum() / is_h.sum()
 
-            if math.isnan(flanks_given_h):
-                raise TypeError
+            triplet_probabilities[hypothesis] = predictors_given_h
 
-        except TypeError:
-
-            flanks_given_h = 0
-
-    # If hypothesis is *never* observed with these flanks, it's not
-    # impossible - merely unlikely. Use the probability of an unobserved allele
-    # as the base probability
-    return flanks_given_h or gene_abundances[gene]['?']
+    return triplet_probabilities
 
 
 def partial_sequence_match(gene: str, genes: Path, jsonpath: Path) -> Set[str]:
@@ -213,26 +209,9 @@ def allele_abundances(gene: str, partial_matches: Set[str], model_path: Path):
     return gene, abundance
 
 
-def redistribute_allele_probability(abundances, fragment_matches):
-    """Filters alleles ruled out by fragment matching and recalculates
-    abundance proportions.
-    """
-
-    filtered_abundances = {k: v
-                           for k, v in abundances.items()
-                           if k in fragment_matches or k == '?'}
-
-    total_remaining_probability = sum(filtered_abundances.values())
-
-    adjusted_abundances = {k: v / total_remaining_probability
-                           for k, v in filtered_abundances.items()}
-
-    return adjusted_abundances
-
-
 def neighbour_similarities(neighbour: Neighbour,
-                           abundances: Dict[Union[int, str], float]):
-    """Use weighting for multiple observations of the same neightbour allele"""
+                           abundances: Dict[str, float]):
+    """Weight multiple observations of the same neightbour allele"""
 
     allele_proportions = Counter(neighbour.alleles)
 
