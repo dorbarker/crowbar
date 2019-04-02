@@ -85,7 +85,7 @@ def arguments():
     return parser.parse_args()
 
 
-def nearest_neighbour(gene: str, strain_profile: pd.Series,
+def nearest_neighbour(strain_profile: pd.Series, gene: str,
                       model_calls: pd.DataFrame) -> NeighbourAlleles:
     """Finds the nearest neighbour(s) to `strain`, and returns a Neighbour
     namedtuple containing the row indices in `calls` of its closest relatives,
@@ -142,8 +142,21 @@ def neighbour_allele_probabilities(neighbouring_alleles: NeighbourAlleles,
     return combined_probs
 
 
+def closest_relative_alleles(strain_profile: pd.Series, gene: str,
+                             model_path: Path,
+                             abundances: AlleleProb) -> AlleleProb:
+
+    calls = pd.read_csv(model_path / 'calls.csv')
+
+    neighbour_alleles = nearest_neighbour(strain_profile, gene, calls)
+
+    return neighbour_allele_probabilities(neighbour_alleles, abundances)
+
 def flank_linkage(strain_profile: pd.Series, gene: str, model_path: Path,
-                  abundances: Dict, calls: pd.DataFrame) -> AlleleProb:
+                  abundances: Dict) -> AlleleProb:
+
+    calls_path = model_path / calls.csv
+    calls = pd.read_csv(calls_path)
 
     triplet_path = model_path / 'triplets.json'
     with triplet_path.open('r') as f:
@@ -189,9 +202,10 @@ def flank_linkage(strain_profile: pd.Series, gene: str, model_path: Path,
     return triplet_probabilities
 
 
-def partial_sequence_match(gene: str, genes: Path, jsonpath: Path) -> Set[str]:
+def partial_sequence_match(gene: str, model_path: Path, jsonpath: Path) -> Set[str]:
     """Attempts to use partial sequence data to exclude possible alleles."""
 
+    genes = model_path / 'alleles'
 
     with jsonpath.open('r') as json_obj:
         data = json.load(json_obj)
@@ -282,34 +296,27 @@ def load_genome(genome_calls_path: Path):
     return pd.Series(genome_calls)
 
 
-def write_output(results, outpath: Path) -> None:
+def recover(strain_profile: pd.Series, json_path, model_path: Path):
 
-    reformatted_results = {}
+    missing = strain_profile < 1
 
-    for strain in results:
-        reformatted_results[strain] = {}
+    missing_genes = strain_profile[missing].index
 
-        for gene in results[strain]:
-            reformatted_results[strain][gene] = {}
+    for gene in missing_genes:
 
-            for allele in results[strain][gene]:
+        partial_matches = partial_sequence_match(gene, model_path, json_path)
 
-                allele_ = str(allele)  # JSON keys are converted to str anyway
+        abundances = allele_abundances(gene, partial_matches, model_path)
 
-                prob = results[strain][gene][allele]
-                probability = -1 if np.isnan(prob) else float(prob)
+        triplets = flank_linkage(strain_profile, gene, model_path, abundances)
 
-                reformatted_results[strain][gene][allele_] = probability
+        neighbours = closest_relative_alleles(strain_profile, gene,
+                                              model_path, abundances)
 
-    if outpath is None:
+        probabilities = bayes(abundances, triplets, neighbours)
 
-        json.dump(reformatted_results, sys.stdout, indent=4)
 
-    else:
-
-        with outpath.open('w') as out:
-            json.dump(reformatted_results, out, indent=4)
-
+        # TODO apply probabilities
 
 def main():
     """Main function. Gathers arguments and passes them to recover()"""
