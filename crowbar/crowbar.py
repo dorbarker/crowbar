@@ -31,6 +31,8 @@ ABUNDANCE = Dict[Union[str, int], float]
 
 Neighbour = namedtuple('Neighbour', ('indices', 'alleles', 'similarity'))
 
+NeighbourAlleles = List[Tuple[str, float]]
+AlleleProb = Dict[str, float]
 
 def arguments():
     """Gather command line arguments for crowbar.py"""
@@ -84,7 +86,7 @@ def arguments():
 
 
 def nearest_neighbour(gene: str, strain_profile: pd.Series,
-                      model_calls: pd.DataFrame) -> List[Tuple[int, float]]:
+                      model_calls: pd.DataFrame) -> NeighbourAlleles:
     """Finds the nearest neighbour(s) to `strain`, and returns a Neighbour
     namedtuple containing the row indices in `calls` of its closest relatives,
     the allele(s) present at `gene`, and their percent Hamming similarity.
@@ -116,8 +118,32 @@ def nearest_neighbour(gene: str, strain_profile: pd.Series,
     return neighbouring_alleles
 
 
+def neighbour_allele_probabilities(neighbouring_alleles: NeighbourAlleles,
+                                   abundances: AlleleProb) -> AlleleProb:
+    ...
+
+    neighbours, similarities = zip(*neighbouring_alleles)
+    similarity, *_ = similarities
+
+    allele_counts = Counter(neighbours)
+
+    for allele, abundance in abundances.items():
+
+        if allele in neighbours:
+
+            count = allele_counts[allele]
+
+            combined_probs[allele] = similarity * (1 - (abundance ** count))
+
+        else:
+
+            combined_probs[allele] = (1 - similarity) * abundance
+
+    return combined_probs
+
+
 def flank_linkage(strain_profile: pd.Series, gene: str, model_path: Path,
-                  abundances: Dict, calls: pd.DataFrame) -> Dict[str, float]:
+                  abundances: Dict, calls: pd.DataFrame) -> AlleleProb:
 
     triplet_path = model_path / 'triplets.json'
     with triplet_path.open('r') as f:
@@ -206,30 +232,7 @@ def allele_abundances(gene: str, partial_matches: Set[str], model_path: Path):
     abundance = {allele: count / total_observations
                  for allele, count in possible_abundance}
 
-    return gene, abundance
-
-
-def neighbour_similarities(neighbour: Neighbour,
-                           abundances: Dict[str, float]):
-    """Weight multiple observations of the same neightbour allele"""
-
-    allele_proportions = Counter(neighbour.alleles)
-
-    combined_probs = {}
-
-    for k, abund in abundances.items():
-
-        if k in allele_proportions:
-
-            count = allele_proportions[k]
-
-            combined_probs[k] = neighbour.similarity * (1 - (abund ** count))
-
-        else:
-
-            combined_probs[k] = (1 - neighbour.similarity) * abund
-
-    return combined_probs
+    return abundance
 
 
 def bayes(adj_abundances, neighbour_probs, flanks) -> Dict[int, float]:
@@ -255,6 +258,10 @@ def bayes(adj_abundances, neighbour_probs, flanks) -> Dict[int, float]:
 
     return {h: ((likelihoods[h] * adj_abundances[h]) / e)
             for h in adj_abundances}
+
+
+def bayes(abundances, triplets, neighbours):
+    ...
 
 
 def recover_allele(strain: str, gene: str, calls: pd.DataFrame,
