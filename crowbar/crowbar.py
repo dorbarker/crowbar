@@ -211,7 +211,8 @@ def partial_sequence_match(gene: str, genes: Path, jsonpath: Path) -> Set[str]:
     return matches
 
 
-def allele_abundances(gene: str, partial_matches: Set[str], model_path: Path):
+def allele_abundances(gene: str, partial_matches: Set[str],
+                      model_path: Path) -> AlleleProb:
     """Calculates the abundances of alleles for a given gene and attempts to
     determine the probability that the next observation will be a new allele.
     """
@@ -235,7 +236,8 @@ def allele_abundances(gene: str, partial_matches: Set[str], model_path: Path):
     return abundance
 
 
-def bayes(adj_abundances, neighbour_probs, flanks) -> Dict[int, float]:
+def bayes(abundances: AlleleProb, triplets: AlleleProb,
+          neighbours: AlleleProb) -> AlleleProb:
 
     def bayes_theorem(h: Union[str, int]) -> float:
         """Implementation of Bayes' Theorem in which the hypothesis being
@@ -244,11 +246,11 @@ def bayes(adj_abundances, neighbour_probs, flanks) -> Dict[int, float]:
         in question to its nearest neighbour.
         """
 
-        neighbour_probability = neighbour_probs[h]
+        neighbour_probability = neighbours[h]
 
-        flanks_given_h = flanks[h]
+        triplet_probability = triplets[h]
 
-        e_h = flanks_given_h * neighbour_probability
+        e_h = triplet_probability * neighbour_probability
 
         return e_h
 
@@ -256,94 +258,28 @@ def bayes(adj_abundances, neighbour_probs, flanks) -> Dict[int, float]:
 
     e = sum(likelihoods.values())
 
-    return {h: ((likelihoods[h] * adj_abundances[h]) / e)
-            for h in adj_abundances}
+    return {h: ((likelihoods[h] * abundances[h]) / e) for h in abundances}
 
 
-def bayes(abundances, triplets, neighbours):
-    ...
+def load_genome(genome_calls_path: Path):
 
+    # Load from fsac JSON
+    with genome_calls_path.open('r') as f:
+        data = json.load(f)
 
-def recover_allele(strain: str, gene: str, calls: pd.DataFrame,
-                   distances: np.matrix, genes: Path, jsondir: Path,
-                   gene_abundances):
-    """Attempts to recover the allele of a missing locus based on
-    lines of evidence from allele abundance, linkage disequilibrium, the
-    close relatives.
+    genome_calls = {}
+    for gene in data:
 
-    If the locus is truncated, fragment matching can be used to eliminate
-    possible alleles. If the gene is wholly missing, then all alleles are in
-    contention.
-    """
+        if data[gene]['BlastResult'] is False:
+            genome_calls[gene] = '0'
 
-    if calls.loc[strain, gene] == -1:  # is truncation
+        elif data[gene]['IsContigTrucation']:
+            genome_calls[gene] = '-1'
 
-        fragment_matches = partial_sequence_match(strain, gene, genes, jsondir)
+        else:
+            genome_calls[gene] = data[gene]['MarkerMatch']
 
-    else:  # is wholly missing
-
-        fragment_matches = set(calls[gene]) - {0, -1}
-
-    adj_abundances = redistribute_allele_probability(gene_abundances[gene],
-                                                     fragment_matches)
-
-    neighbour = nearest_neighbour(gene, strain,  # fragment_matches,
-                                  distances, calls)
-
-    neighbour_probs = neighbour_similarities(neighbour, adj_abundances)
-
-    flanks = {h: flank_linkage(strain, gene, h, gene_abundances, calls)
-              for h in adj_abundances}
-
-    probabilities = bayes(adj_abundances, neighbour_probs, flanks)
-
-    return probabilities
-
-
-def recover(callspath: Path, reference: Path, genes: Path, jsondir: Path,
-            distance_path: Optional[Path], replicates: int, seed: int,
-            cores: int):
-    """Master function for crowBAR.
-
-    Walks through a pandas DataFrame of allele calls and attempts to recover
-    any truncated (-1) or absent (0) loci.
-    """
-
-    results = {}  # Dict[str, Dict[str, Dict[int, float]
-
-    calls = order_on_reference(reference, genes,
-                               pd.read_csv(callspath, index_col=0), cores)
-
-    distances = hamming_distance_matrix(distance_path, calls, cores)
-
-    gene_abundances = gene_allele_abundances(calls, replicates, seed, cores)
-
-    total_bad = sum((calls < 1).sum())
-
-    counter = 0
-
-    for strain in calls.index:
-
-        for gene in calls.columns:
-
-            if calls.loc[strain, gene] < 1:  # truncated or missing
-
-                probs = recover_allele(strain, gene, calls, distances,
-                                       genes, jsondir, gene_abundances)
-
-                try:
-                    results[strain][gene] = probs
-
-                except KeyError:
-
-                    results[strain] = {}
-                    results[strain][gene] = probs
-
-                counter += 1
-
-                user_msg(counter, '/', total_bad)
-
-    return results
+    return pd.Series(genome_calls)
 
 
 def write_output(results, outpath: Path) -> None:
