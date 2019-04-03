@@ -293,7 +293,7 @@ def load_genome(genome_calls_path: Path):
         else:
             genome_calls[gene] = data[gene]['MarkerMatch']
 
-    return pd.Series(genome_calls)
+    return pd.Series(genome_calls, name=genome_calls_path.stem)
 
 
 def recover(strain_profile: pd.Series, json_path,
@@ -330,7 +330,17 @@ def recover(strain_profile: pd.Series, json_path,
     return repaired_calls, all_gene_probabilities
 
 
-def write_results(repaired_calls, )
+def write_results(repaired_calls: pd.Series,
+                  all_gene_probabilities: Dict[str, AlleleProb],
+                  outdir: Path) -> None:
+
+    output_name = outdir / repaired_calls.name
+
+    pd.DataFrame(repaired_calls).T.to_csv(output_name.with_suffix('.csv'))
+
+    with output_name.with_suffix('.json').open('w') as f:
+        json.dump(all_gene_probabilities)
+
 def main():
     """Main function. Gathers arguments and passes them to recover()"""
 
