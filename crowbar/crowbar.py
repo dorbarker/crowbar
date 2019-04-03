@@ -296,7 +296,13 @@ def load_genome(genome_calls_path: Path):
     return pd.Series(genome_calls)
 
 
-def recover(strain_profile: pd.Series, json_path, model_path: Path):
+def recover(strain_profile: pd.Series, json_path,
+            model_path: Path) -> Tuple[pd.Series, Dict[str, AlleleProb]]:
+
+
+    repaired_calls = strain_profile.copy()
+
+    all_gene_probabilities = {}
 
     missing = strain_profile < 1
 
@@ -315,9 +321,16 @@ def recover(strain_profile: pd.Series, json_path, model_path: Path):
 
         probabilities = bayes(abundances, triplets, neighbours)
 
+        most_probable = max(probabilities, key=lambda x: probabilities[x])
 
-        # TODO apply probabilities
+        repaired_calls[gene] = most_probable
 
+        all_gene_probabilities[gene] = probabilities
+
+    return repaired_calls, all_gene_probabilities
+
+
+def write_results(repaired_calls, )
 def main():
     """Main function. Gathers arguments and passes them to recover()"""
 
