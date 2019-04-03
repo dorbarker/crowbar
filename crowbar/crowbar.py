@@ -39,48 +39,20 @@ def arguments():
 
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--cores',
-                        type=int,
-                        default=1,
-                        help='Number of CPU cores to use [1]')
-
-    parser.add_argument('--replicates',
-                        type=int,
-                        default=100,
-                        help='Replicates for the Monte Carlo estimation of \
-                              the probability of finding a novel allele')
-
-    parser.add_argument('--seed',
-                        type=int,
-                        default=1,
-                        help='Seed to initialize the Monte Carlo simulation')
-
-    parser.add_argument('--reference',
+    parser.add_argument('-i', '--input',
                         type=Path,
                         required=True,
-                        help='Path to reference genome')
+                        help='Path to input fsac-formatted JSON')
 
-    parser.add_argument('--distances',
+    parser.add_argument('-o', '--output',
                         type=Path,
-                        required=False,
-                        help='Path to pre-calculated distance matrix')
+                        required=True,
+                        help='Path to output directory')
 
-    parser.add_argument('--output',
+    parser.add_argument('--model',
                         type=Path,
-                        required=False,
-                        help='JSON-formatted output destination [stdout]')
-
-    parser.add_argument('calls',
-                        type=Path,
-                        help='Table of allele calls')
-
-    parser.add_argument('genes',
-                        type=Path,
-                        help='Directory of gene multifastas')
-
-    parser.add_argument('jsons',
-                        type=Path,
-                        help='Directory containing MIST results')
+                        required=True,
+                        help='Path to recovery model')
 
     return parser.parse_args()
 
@@ -341,15 +313,17 @@ def write_results(repaired_calls: pd.Series,
     with output_name.with_suffix('.json').open('w') as f:
         json.dump(all_gene_probabilities)
 
+
 def main():
     """Main function. Gathers arguments and passes them to recover()"""
 
     args = arguments()
 
-    results = recover(args.calls, args.reference, args.genes, args.jsons,
-                      args.distances, args.replicates, args.seed, args.cores)
+    strain_profile = load_genome(args.input)
 
-    write_output(results, args.output)
+    repaired, probabilities =  recover(strain_profile, args.input, args.model)
+
+    write_results(repaired, probabilities, args.output)
 
 
 if __name__ == '__main__':
