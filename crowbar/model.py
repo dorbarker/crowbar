@@ -1,8 +1,10 @@
 import argparse
 import shutil
 import collections
+import functools
 import itertools
 import json
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import Dict, Tuple
 import pandas as pd
@@ -30,6 +32,11 @@ def arguments():
                         required=True,
                         help='Directory containing model')
 
+    parser.add_argument('--cores',
+                        type=int,
+                        default=1,
+                        help='Number of CPU cores to use [1]')
+
     return parser.parse_args()
 
 
@@ -39,18 +46,19 @@ def main():
 
     calls = load_calls(args.calls)
 
-    build_model(calls, args.alleles_dir, args.output)
+    build_model(calls, args.alleles_dir, args.output, args.cores)
 
 
-def build_model(calls: pd.DataFrame, alleles_dir: Path, model_path: Path):
+def build_model(calls: pd.DataFrame, alleles_dir: Path,
+                model_path: Path, cores: int):
 
-    model_path.mkdir(exists_ok=True, parents=True)
+    model_path.mkdir(exist_ok=True, parents=True)
 
     save_calls(calls, model_path)
 
     save_known_alleles(alleles_dir, model_path)
 
-    triplets = generate_copartitioning_triplets(calls)
+    triplets = generate_copartitioning_triplets(calls, cores)
 
     abundances = calculate_abundances(calls)
 
@@ -67,7 +75,7 @@ def load_calls(calls_path: Path) -> pd.DataFrame:
     return calls
 
 
-def generate_copartitioning_triplets(calls: pd.DataFrame) -> Triplets:
+def generate_copartitioning_triplets(calls: pd.DataFrame, cores: int) -> Triplets:
     """For each gene, find the other two genes that partition the population
     most similarly to that gene. Uses the Adjusted Wallace Coefficient to
     determine the most similar genes.
@@ -78,11 +86,15 @@ def generate_copartitioning_triplets(calls: pd.DataFrame) -> Triplets:
 
     wallaces = {}
 
-    pairwise_calls = itertools.permutations(calls.iteritems(), r=2)
+    geneAs, geneBs = zip(*itertools.permutations(calls.columns, r=2))
 
-    for (geneA, allelesA), (geneB, allelesB) in pairwise_calls:
+    adj_wallace = functools.partial(wallace.adj_wallace, calls=calls)
 
-        adj_wallace_value = wallace.adj_wallace(allelesA, allelesB)
+    with ProcessPoolExecutor(max_workers=cores) as ppe:
+
+        results = ppe.map(adj_wallace, geneAs, geneBs, chunksize=100)
+
+    for geneA, geneB, adj_wallace_value in zip(geneAs, geneBs, results):
 
         try:
             wallaces[geneA][geneB] = adj_wallace_value
@@ -121,8 +133,9 @@ def save_known_alleles(alleles_dir: Path, model_path: Path) -> None:
 
     # will copy all files in alleles_dir, as FASTA extensions aren't standard
     for fasta in alleles_dir.glob('*'):
-        dst = model_alleles_dir / fasta.name
-        shutil.copy(fasta, dst)
+        if fasta.is_file():
+            dst = model_alleles_dir / fasta.name
+            shutil.copy(fasta, dst)
 
 
 def calculate_abundances(calls: pd.DataFrame) -> Abundance:

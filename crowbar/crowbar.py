@@ -69,7 +69,11 @@ def nearest_neighbour(strain_profile: pd.Series, gene: str,
         distance of non-missing loci.
         """
 
-        shared = [a and b for a, b in zip(strain1 > 0, strain2 > 0)]
+        missing = [0, -1]
+        s1 = ~strain1.isin(missing)
+        s2 = ~strain2.isin(missing)
+
+        shared = [a and b for a, b in zip(s1, s2)]
 
         return sum(strain1[shared] == strain2[shared]) / sum(shared)
 
@@ -77,7 +81,7 @@ def nearest_neighbour(strain_profile: pd.Series, gene: str,
     similarities = [(row_strain, percent_shared(strain_profile, row_profile))
                     for row_strain, row_profile in model_calls.iterrows()]
 
-    sorted_similarities = reversed(sorted(similarities, key=lambda x: x[1]))
+    sorted_similarities = list(reversed(sorted(similarities, key=lambda x: x[1])))
 
     max_similarity = sorted_similarities[0][1]
 
@@ -92,12 +96,13 @@ def nearest_neighbour(strain_profile: pd.Series, gene: str,
 
 def neighbour_allele_probabilities(neighbouring_alleles: NeighbourAlleles,
                                    abundances: AlleleProb) -> AlleleProb:
-    ...
 
     neighbours, similarities = zip(*neighbouring_alleles)
     similarity, *_ = similarities
 
     allele_counts = Counter(neighbours)
+
+    combined_probs = {}
 
     for allele, abundance in abundances.items():
 
@@ -118,7 +123,7 @@ def closest_relative_alleles(strain_profile: pd.Series, gene: str,
                              model_path: Path,
                              abundances: AlleleProb) -> AlleleProb:
 
-    calls = pd.read_csv(model_path / 'calls.csv')
+    calls = pd.read_csv(model_path / 'calls.csv', index_col=0)
 
     neighbour_alleles = nearest_neighbour(strain_profile, gene, calls)
 
@@ -127,24 +132,24 @@ def closest_relative_alleles(strain_profile: pd.Series, gene: str,
 def flank_linkage(strain_profile: pd.Series, gene: str, model_path: Path,
                   abundances: Dict) -> AlleleProb:
 
-    calls_path = model_path / calls.csv
-    calls = pd.read_csv(calls_path)
+    calls_path = model_path / 'calls.csv'
+    calls = pd.read_csv(calls_path, index_col=0)
 
     triplet_path = model_path / 'triplets.json'
     with triplet_path.open('r') as f:
         data = json.load(f)
 
-    best_predictor_gene = data[gene]['best']
-    second_predictor_gene = data[gene]['second']
+    best_predictor_gene = data[gene]['best'][0]  # index access is temp hack
+    second_predictor_gene = data[gene]['second'][0]
 
     best_calls = calls[best_predictor_gene]
     second_calls = calls[second_predictor_gene]
     query_calls = calls[gene]
 
-    possible = np.array(abundances.keys())
+    possible = np.array(list(abundances.keys()))
 
-    strain_best_predictor = strain_profile[best_predictor_gene]
-    strain_second_predictor = strain_profile[second_predictor_gene]
+    strain_best_predictor = int(strain_profile[best_predictor_gene])
+    strain_second_predictor = int(strain_profile[second_predictor_gene])
 
     predictions = (best_calls == strain_best_predictor)     & \
                   (second_calls == strain_second_predictor) & \
@@ -217,7 +222,7 @@ def allele_abundances(gene: str, partial_matches: Set[str],
     total_observations = sum(possible_abundance.values())
 
     abundance = {allele: count / total_observations
-                 for allele, count in possible_abundance}
+                 for allele, count in possible_abundance.items()}
 
     return abundance
 
@@ -240,7 +245,7 @@ def bayes(abundances: AlleleProb, triplets: AlleleProb,
 
         return e_h
 
-    likelihoods = {h: bayes_theorem(h) for h in adj_abundances}
+    likelihoods = {h: bayes_theorem(h) for h in abundances}
 
     e = sum(likelihoods.values())
 
@@ -259,13 +264,13 @@ def load_genome(genome_calls_path: Path):
         if data[gene]['BlastResult'] is False:
             genome_calls[gene] = '0'
 
-        elif data[gene]['IsContigTrucation']:
+        elif data[gene]['IsContigTruncation']:
             genome_calls[gene] = '-1'
 
         else:
             genome_calls[gene] = data[gene]['MarkerMatch']
 
-    return pd.Series(genome_calls, name=genome_calls_path.stem)
+    return pd.Series(genome_calls, name=genome_calls_path.stem, dtype=int)
 
 
 def recover(strain_profile: pd.Series, json_path,
@@ -276,7 +281,7 @@ def recover(strain_profile: pd.Series, json_path,
 
     all_gene_probabilities = {}
 
-    missing = strain_profile < 1
+    missing = strain_profile.isin(pd.Series(['0', '-1'])) #< 1
 
     missing_genes = strain_profile[missing].index
 
@@ -311,7 +316,7 @@ def write_results(repaired_calls: pd.Series,
     pd.DataFrame(repaired_calls).T.to_csv(output_name.with_suffix('.csv'))
 
     with output_name.with_suffix('.json').open('w') as f:
-        json.dump(all_gene_probabilities)
+        json.dump(all_gene_probabilities, f)
 
 
 def main():
