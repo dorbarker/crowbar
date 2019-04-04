@@ -30,11 +30,6 @@ def arguments():
                         default=1,
                         help='Number of CPU cores to use [1]')
 
-    parser.add_argument('--seed',
-                        type=int,
-                        default=1,
-                        help='Seed to initialize the PRNG [1]')
-
     parser.add_argument('--truncation-probability',
                         type=float,
                         default=0.0,
@@ -49,43 +44,20 @@ def arguments():
                         help='Uniform probability that any given \
                               locus will be rendered missing [0.0]')
 
-    parser.add_argument('--reference',
-                        type=Path,
-                        required=True,
-                        help='Path to reference genome')
-
     parser.add_argument('--tempdir',
                         type=Path,
                         default=Path('/tmp'),
                         help='Directory for ephemeral working files')
-
-    parser.add_argument('--distances',
-                        type=Path,
-                        required=True,
-                        help='Path to pre-calculated distance matrix')
-
-    parser.add_argument('--replicates',
-                        type=int,
-                        default=100,
-                        help='Number of Monte Carlo iterations for estimating \
-                              the probability of new allele discovery')
 
     parser.add_argument('--output',
                         type=Path,
                         required=True,
                         help='Output path')
 
-    parser.add_argument('calls',
+    parser.add_argument('--model',
                         type=Path,
-                        help='Table of allele calls')
-
-    parser.add_argument('genes',
-                        type=Path,
-                        help='Directory of gene multifastas')
-
-    parser.add_argument('jsons',
-                        type=Path,
-                        help='Directory containing MIST results')
+                        required=True,
+                        help='Path to pre-trained model')
 
     return parser.parse_args()
 
