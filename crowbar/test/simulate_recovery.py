@@ -1,6 +1,6 @@
 # regular imports
 import sys
-import os.path
+import os
 import argparse
 import json
 import random
@@ -22,6 +22,10 @@ from shared import logtime, hamming_distance_matrix
 TRUNCATIONS = Dict[str, Dict[str, str]]
 
 def arguments():
+
+    def get_temp_dir():
+
+        return Path(os.environ.get('XDG_RUNTIME_DIR') or '/tmp')
 
     parser = argparse.ArgumentParser()
 
@@ -46,7 +50,7 @@ def arguments():
 
     parser.add_argument('--tempdir',
                         type=Path,
-                        default=Path('/tmp'),
+                        default=get_temp_dir(),
                         help='Directory for ephemeral working files')
 
     parser.add_argument('--output',
@@ -61,69 +65,24 @@ def arguments():
 
     return parser.parse_args()
 
-def sequential_test(calls: pd.DataFrame, jsondir: Path, genes: Path,
-                    tempdir: Path, seed: int, replicates: int, cores: int):
-    truncations = {}
 
-    for strain in calls.index:
-        for gene in calls.columns:
-            truncations[strain] = truncate(strain, gene, jsondir)
+def modify_row(strain_profile: pd.Series, trunc_count: int, miss_count: int,
+               jsondir: Path) -> pd.Series:
 
-ERROR_CALLS_TRUNCS = Tuple[pd.DataFrame, TRUNCATIONS]
-@logtime('Adding random errors')
-def random_errors(trunc_prob: float, miss_prob: float, calls: pd.DataFrame,
-                  jsondir: Path, seed: int, cores: int) -> ERROR_CALLS_TRUNCS:
+    to_truncate = random.sample(strain_profile.index, k=trunc_count)
+    to_vanish = random.sample(strain_profile.index, k=miss_count)
 
-    random.seed(seed)
-
-    error_calls = pd.DataFrame(columns=calls.columns)
-
-    truncations = {}
-    strains = []
-
-    modify = partial(modify_row, trunc_prob=trunc_prob,
-                     miss_prob=miss_prob, jsondir=jsondir)
-
-    with ProcessPoolExecutor(max_workers=cores) as ppe:
-        errors = ppe.map(modify, calls.iterrows())
-
-    for line in errors:
-
-        strain = line['strain']
-
-        strains.append(strain)
-
-        truncations[strain] = line['truncations']
-
-        row = zip(error_calls.columns, line['row'])
-
-        error_calls = error_calls.append(dict(row), ignore_index=True)
-
-    error_calls.index = strains
-
-    assert all(error_calls.index == calls.index), 'Mismatched row order'
-
-    return error_calls, truncations
-
-
-def modify_row(strain_row, trunc_prob, miss_prob, jsondir):
-
-    strain, row = strain_row
-
-    to_truncate = [random.random() < trunc_prob for _ in row]
-    to_vanish = [random.random() < miss_prob for _ in row]
-
-    row[to_truncate] = [-1 for _ in row]
-    row[to_vanish] = [0 for _ in row]
+    strain_profile[to_truncate] = -1
+    strain_profile[to_vanish] = 0
 
     truncs = {gene: truncate(strain, gene, jsondir)
               for gene in row[to_truncate].index}
 
-    return {'strain': strain, 'row': row, 'truncations': truncs}
+    return strain_profile, truncs
 
 
 def truncate(strain: str, gene: str, jsondir: Path) -> str:
-    """Loads a partial nucleotide alignment from MIST-generated JSON
+    """Loads a partial nucleotide alignment from fsac-generated JSON
     output.
 
     Currently, this function assumes that there is only one cgMLST test per
@@ -135,14 +94,7 @@ def truncate(strain: str, gene: str, jsondir: Path) -> str:
     with jsonpath.open('r') as json_obj:
         data = json.load(json_obj)
 
-    test_results = data['Results'][0]['TestResults']
-
-    # presumed to be a single test name per file
-    test_name, *_ = test_results.keys()
-
-    test_data = test_results[test_name]
-
-    sequence = test_data[gene]['Amplicon']
+    sequence = data[gene]['SubjAln']
 
     # Leave at least a 50-mer on each end
     pivot = random.randint(50, len(sequence) - 50)
@@ -154,126 +106,45 @@ def truncate(strain: str, gene: str, jsondir: Path) -> str:
 
 
 @logtime('Creating dummy JSONs')
-def create_dummy_jsons(truncations: TRUNCATIONS, tempdir: Path) -> None:
+def create_dummy_jsons(strain: str, truncations: TRUNCATIONS,
+                       tempdir: Path) -> Path:
 
-    for strain in truncations:
+    genes = {gene: {'SubjAln': seq} for gene, seq in truncations.items()}
 
-        genes = {gene: {'Amplicon': truncations[strain][gene]}
-                 for gene in truncations[strain]}
+    temp_json_path = (tempdir / strain).with_suffix('.json')
 
-        data = {'Results': [{'TestResults': {'dummy': genes}}]}
+    with temp_json_path.open('w') as out:
+        json.dump(genes, out)
 
-        json_path = (tempdir / strain).with_suffix('.json')
-
-        with json_path.open('w') as out:
-            json.dump(data, out)
+    return temp_json_path
 
 
-def recover_simulated(strain: str, gene: str, calls: pd.DataFrame,
-                      distances: np.matrix, genes: Path, jsondir: Path,
-                      gene_abundances) -> Union[int, str]:
+def simulate_recovery(trunc_count: int, miss_count: int, json_dir: Path,
+                      temp_dir: Path, outdir: Path, model_path: Path):
 
-    probs = crowbar.recover_allele(strain, gene, calls, distances, genes,
-                                   jsondir, gene_abundances)
+    jsons = json_dir.glob('*.json')
 
-    probs = crowbar.redistribute_allele_probability(probs, set(calls[gene]))
+    for genome_path in jsons:
 
-    most_likely_allele = max(probs, key=lambda x: probs[x])
-    allele_prob = probs[most_likely_allele]
+        strain_name = genome_path.stem
 
-    return most_likely_allele, allele_prob
+        strain_profile = crowbar.load_genome(genome_path)
 
+        modified_profile, truncation = modify_row(strain_profile, trunc_count,
+                                                  miss_count, json_dir)
 
-@logtime('Getting distance matrix')
-def get_distances(dist: Path, calls: pd.DataFrame,
-                  cores: int) -> np.matrix:
+        temp_json = create_dummy_jsons(strain_name, truncations, tempdir)
 
+        repaired_calls, probabilities = crowbar.recover(modified_profile,
+                                                        temp_json, model_path)
 
-    raw_distances = hamming_distance_matrix(dist, calls, cores)
-
-    indices = pd.read_csv(dist, index_col=0, header=0).index
-
-    mod_distances = pd.DataFrame(raw_distances, index=indices, columns=indices)
-
-    distances = np.matrix(mod_distances.loc[calls.index, calls.index])
-
-    return distances
+        crowbar.write_results(repaired_calls, probabilities, outdir)
 
 
-@logtime('Recovery simulation')
-def simulate_recovery(truncation_probability: float,
-                      missing_probability: float, calls: pd.DataFrame,
-                      jsondir: Path, genes: Path, tempdir: Path,
-                      distpath: Optional[Path],
-                      seed: int, replicates: int, cores: int) -> pd.DataFrame:
-
-    def retrieve_results(result_dict):
-
-        cols = ['strain', 'gene', 'error', 'original',
-                'recovered', 'likelihood', 'match']
-
-        data = []
-
-        for strain in result_dict:
-
-            for gene in result_dict[strain]:
-
-                recovered, prob  = result_dict[strain][gene]['recovered']
-                original = result_dict[strain][gene]['original']
-                match = recovered == original
-                error = result_dict[strain][gene]['error']
-
-                data.append({'strain': strain,
-                             'gene': gene,
-                             'error': error,
-                             'recovered': recovered,
-                             'original': original,
-                             'likelihood': prob,
-                             'match': int(match)})
-
-        data_df = pd.DataFrame(data, columns=cols)
-
-        return data_df
-
-    error_calls, truncations = random_errors(truncation_probability,
-                                             missing_probability, calls,
-                                             jsondir, seed, cores)
-
-    create_dummy_jsons(truncations, tempdir)
-
-    distances = get_distances(distpath, error_calls, cores)
-
-    gene_abundances = crowbar.gene_allele_abundances(calls, replicates,
-                                                     seed, cores)
-
-    recover = partial(recover_simulated, calls=error_calls,
-                      distances=distances, genes=genes, jsondir=tempdir,
-                      gene_abundances=gene_abundances)
-
-
-    raw_results = {}
-
-    for strain in error_calls.index:
-
-        for gene in error_calls.columns:
-
-            if error_calls.loc[strain, gene] > 0:
-                continue
-
-            recovered = recover(strain, gene)
-
-            result = {'recovered': recovered,
-                      'original': calls.loc[strain, gene],
-                      'error': error_calls.loc[strain, gene]}
-
-            try:
-                raw_results[strain][gene] = result
-
-            except KeyError:
-                raw_results[strain] = {}
-                raw_results[strain][gene] = result
-
-    return retrieve_results(raw_results)
+def compare_to_known(outdir: Path, jsondir: Path):
+    # Compare maximum probabiltiy from JSON to known result
+    # {gene: {allele: probability}}
+    ...
 
 
 def summarize_results(results: pd.DataFrame, result_out: Path):
