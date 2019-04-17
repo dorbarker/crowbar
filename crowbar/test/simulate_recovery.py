@@ -20,6 +20,7 @@ from shared import logtime, hamming_distance_matrix
 
 # Complex types
 TRUNCATIONS = Dict[str, Dict[str, str]]
+SimulationResults = Dict[str, Dict[str, Union[str, float]]]
 
 def arguments():
 
@@ -63,7 +64,17 @@ def arguments():
                         required=True,
                         help='Path to pre-trained model')
 
-    return parser.parse_args()
+    args = parser.parse_args()
+
+    model_jsons = args.model / 'jsons'
+
+    if args.tempdir == model_jsons:
+
+        msg = '--tempdir [{}] cannot be the JSON directory of the model [{}]'
+        print(msg.format(args.tempdir, model_jsons), file=sys.stderr)
+
+
+    return args
 
 
 def modify_row(strain_profile: pd.Series, trunc_count: int, miss_count: int,
@@ -141,10 +152,45 @@ def simulate_recovery(trunc_count: int, miss_count: int, json_dir: Path,
         crowbar.write_results(repaired_calls, probabilities, outdir)
 
 
-def compare_to_known(outdir: Path, jsondir: Path):
+def compare_to_known(simulation_outdir: Path,
+                     known_jsondir: Path) -> SimulationResults:
     # Compare maximum probabiltiy from JSON to known result
     # {gene: {allele: probability}}
-    ...
+
+    results = {}
+
+    simulated_jsons = simulation_outdir.glob('*.json')
+
+    for simulated_json in simulated_jsons:
+
+        known_json = known_jsondir / simulated_json.name
+
+        strain = simulated_json.stem
+
+        with simulated_json.open('r') as s, known_json.open('r') as k:
+
+            simulated = json.load(s)
+
+            known = json.load(k)
+
+        for gene in simulated:
+
+            alleles = simulated[gene]
+
+            likeliest_allele, second_allele = sorted(alleles,
+                                                     key=lambda x: alleles[x])
+
+            actual_allele = known[gene]['MarkerMatch']
+
+            results[gene] = {'actual': actual_allele,
+                             'error_type': '', # TODO
+                             'correct': likeliest_allele == actual_allele,
+                             'most_likely': likeliest_allele,
+                             'most_likely_prob': alleles[likeliest_allele],
+                             'second_allele': second_allele,
+                             'second_prob': alleles[second_allele]}
+
+    return results
 
 
 def summarize_results(results: pd.DataFrame, result_out: Path):
