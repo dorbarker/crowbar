@@ -71,8 +71,7 @@ def arguments():
     if args.tempdir == model_jsons:
 
         msg = '--tempdir [{}] cannot be the JSON directory of the model [{}]'
-        print(msg.format(args.tempdir, model_jsons), file=sys.stderr)
-
+        sys.exit(msg.format(args.tempdir, model_jsons))
 
     return args
 
@@ -202,16 +201,6 @@ def main():
 
     args = arguments()
 
-    assert args.tempdir != args.jsons, 'tempdir cannot equal jsondir'
-
-    calls = crowbar.order_on_reference(args.reference, args.genes,
-                                       pd.read_csv(args.calls, index_col=0),
-                                       args.cores)
-
-    results = simulate_recovery(args.trunc_prob, args.miss_prob, calls,
-                                args.jsons, args.genes, args.tempdir,
-                                args.distances,
-                                args.seed, args.replicates, args.cores)
 
     summarize_results(results, args.output)
 
