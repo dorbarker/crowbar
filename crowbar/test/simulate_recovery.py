@@ -77,7 +77,7 @@ def arguments():
 
 
 def modify_row(strain_profile: pd.Series, trunc_count: int, miss_count: int,
-               jsondir: Path) -> pd.Series:
+               jsondir: Path) -> Tuple[pd.Series, Dict[str, str]]:
 
     to_truncate = random.sample(strain_profile.index, k=trunc_count)
     to_vanish = random.sample(strain_profile.index, k=miss_count)
@@ -97,6 +97,12 @@ def truncate(strain: str, gene: str, jsondir: Path) -> str:
 
     Currently, this function assumes that there is only one cgMLST test per
     JSON file.
+
+    :param strain:  The basename of the query strain
+    :param gene:    The current query gene
+    :param jsondir: Path to the directory containing FSAC input JSONs
+
+    :return:        A partial DNA sequence of at least length 50
     """
 
     jsonpath = (jsondir / strain).with_suffix('.json')
@@ -131,7 +137,20 @@ def create_dummy_jsons(strain: str, truncations: TRUNCATIONS,
 
 def simulate_recovery(trunc_count: int, miss_count: int, json_dir: Path,
                       temp_dir: Path, outdir: Path, model_path: Path):
+    """Simulates recovery of missing or truncated alleles by synthetically
+    introducing these errors into error-free allele calls.
 
+    After generating these synthetic errors and saves them into FSAC-formatted
+    JSON files, it uses crowbar to attempt to recover these allele calls.
+
+    :param trunc_count: Number of truncations to insert in each profile
+    :param miss_count:  Number of missing alleles to insert in each profile
+    :param json_dir:    Location of the directory containing FSAC JSONs
+    :param temp_dir:    Location of the directory containing temporary dummy
+                        JSONs created by this function
+    :param outdir:      Location to write crowbar recovery JSONs
+    :param model_path:  Location of a pre-trained crowbar model
+    """
     jsons = json_dir.glob('*.json')
 
     for genome_path in jsons:
@@ -152,7 +171,8 @@ def simulate_recovery(trunc_count: int, miss_count: int, json_dir: Path,
 
 
 def compare_to_known(simulation_outdir: Path,
-                     known_jsondir: Path) -> SimulationResults:
+                     known_jsondir: Path,
+                     strain_profile: pd.Series) -> SimulationResults:
     # Compare maximum probabiltiy from JSON to known result
     # {gene: {allele: probability}}
 
@@ -182,7 +202,7 @@ def compare_to_known(simulation_outdir: Path,
             actual_allele = known[gene]['MarkerMatch']
 
             results[gene] = {'actual': actual_allele,
-                             'error_type': '', # TODO
+                             'error_type': strain_profile[gene],
                              'correct': likeliest_allele == actual_allele,
                              'most_likely': likeliest_allele,
                              'most_likely_prob': alleles[likeliest_allele],
@@ -192,9 +212,11 @@ def compare_to_known(simulation_outdir: Path,
     return results
 
 
-def summarize_results(results: pd.DataFrame, result_out: Path):
+def summarize_results(results: SimulationResults, result_out: Path):
 
-    results.to_csv(result_out, sep='\t', index=False)
+    df_results = pd.DataFrame(results).T
+
+    df_results.to_csv(result_out, sep='\t', index=False)
 
 
 def main():
