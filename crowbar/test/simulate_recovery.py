@@ -1,25 +1,20 @@
-# regular imports
 import sys
 import os
 import argparse
 import json
 import random
 from concurrent.futures import ProcessPoolExecutor
-from functools import partial
 from pathlib import Path
-from typing import Dict, Optional, Tuple, Union
-# 3rd Party imports
+from typing import Dict, Tuple, Union
 import pandas as pd
-import numpy as np
 
 up = os.path.abspath(os.path.join(os.path.dirname(__file__), os.path.pardir))
 sys.path.append(up)
 
 import crowbar  # main script
-from shared import logtime, hamming_distance_matrix
 
 # Complex types
-TRUNCATIONS = Dict[str, Dict[str, str]]
+Truncations = Dict[str, str]
 SimulationResults = Dict[str, Dict[str, Union[str, float]]]
 
 def arguments():
@@ -49,6 +44,16 @@ def arguments():
                         help='Uniform probability that any given \
                               locus will be rendered missing [0.0]')
 
+    parser.add_argument('--test-jsons',
+                        type=Path,
+                        required=True,
+                        help='Directory containing FSAC-format JSONs')
+
+    parser.add_argument('--out-jsons',
+                        type=Path,
+                        required=True,
+                        help='Directory for recovery JSONs')
+
     parser.add_argument('--tempdir',
                         type=Path,
                         default=get_temp_dir(),
@@ -77,7 +82,7 @@ def arguments():
 
 
 def modify_row(strain_profile: pd.Series, trunc_count: int, miss_count: int,
-               jsondir: Path) -> Tuple[pd.Series, Dict[str, str]]:
+               jsondir: Path) -> Tuple[pd.Series, Truncations]:
 
     to_truncate = random.sample(strain_profile.index, k=trunc_count)
     to_vanish = random.sample(strain_profile.index, k=miss_count)
@@ -85,8 +90,8 @@ def modify_row(strain_profile: pd.Series, trunc_count: int, miss_count: int,
     strain_profile[to_truncate] = -1
     strain_profile[to_vanish] = 0
 
-    truncs = {gene: truncate(strain, gene, jsondir)
-              for gene in row[to_truncate].index}
+    truncs = {gene: truncate(strain_profile.name, gene, jsondir)
+              for gene in strain_profile[to_truncate].index}
 
     return strain_profile, truncs
 
@@ -121,8 +126,7 @@ def truncate(strain: str, gene: str, jsondir: Path) -> str:
     return halves[side]
 
 
-@logtime('Creating dummy JSONs')
-def create_dummy_jsons(strain: str, truncations: TRUNCATIONS,
+def create_dummy_jsons(strain: str, truncations: Truncations,
                        tempdir: Path) -> Path:
 
     genes = {gene: {'SubjAln': seq} for gene, seq in truncations.items()}
@@ -136,7 +140,8 @@ def create_dummy_jsons(strain: str, truncations: TRUNCATIONS,
 
 
 def simulate_recovery(trunc_count: int, miss_count: int, json_dir: Path,
-                      temp_dir: Path, outdir: Path, model_path: Path):
+                      temp_dir: Path, outdir: Path,
+                      model_path: Path) -> Dict[str, pd.Series]:
     """Simulates recovery of missing or truncated alleles by synthetically
     introducing these errors into error-free allele calls.
 
@@ -150,8 +155,13 @@ def simulate_recovery(trunc_count: int, miss_count: int, json_dir: Path,
                         JSONs created by this function
     :param outdir:      Location to write crowbar recovery JSONs
     :param model_path:  Location of a pre-trained crowbar model
+
+    :return:            Dict relating each strain name to its modified profile
     """
+
     jsons = json_dir.glob('*.json')
+
+    profiles = {}
 
     for genome_path in jsons:
 
@@ -159,20 +169,24 @@ def simulate_recovery(trunc_count: int, miss_count: int, json_dir: Path,
 
         strain_profile = crowbar.load_genome(genome_path)
 
-        modified_profile, truncation = modify_row(strain_profile, trunc_count,
-                                                  miss_count, json_dir)
+        modified_profile, truncations = modify_row(strain_profile, trunc_count,
+                                                   miss_count, json_dir)
 
-        temp_json = create_dummy_jsons(strain_name, truncations, tempdir)
+        temp_json = create_dummy_jsons(strain_name, truncations, temp_dir)
 
         repaired_calls, probabilities = crowbar.recover(modified_profile,
                                                         temp_json, model_path)
 
         crowbar.write_results(repaired_calls, probabilities, outdir)
 
+        profiles[strain_name] = modified_profile
+
+    return profiles
+
 
 def compare_to_known(simulation_outdir: Path,
                      known_jsondir: Path,
-                     strain_profile: pd.Series) -> SimulationResults:
+                     strain_profiles: Dict[str, pd.Series]) -> SimulationResults:
     # Compare maximum probabiltiy from JSON to known result
     # {gene: {allele: probability}}
 
@@ -202,7 +216,7 @@ def compare_to_known(simulation_outdir: Path,
             actual_allele = known[gene]['MarkerMatch']
 
             results[gene] = {'actual': actual_allele,
-                             'error_type': strain_profile[gene],
+                             'error_type': strain_profiles[strain][gene],
                              'correct': likeliest_allele == actual_allele,
                              'most_likely': likeliest_allele,
                              'most_likely_prob': alleles[likeliest_allele],
@@ -223,6 +237,11 @@ def main():
 
     args = arguments()
 
+    modified_profiles = simulate_recovery(args.trunc_count, args.miss_count,
+                                          args.test_jsons, args.tempdir,
+                                          args.out_jsons, args.model)
+
+    results = compare_to_known(args.out_jsons, args.test_jsons, modified_profiles)
 
     summarize_results(results, args.output)
 
