@@ -116,7 +116,7 @@ def truncate(strain: str, gene: str, jsondir: Path) -> str:
     pivot = random.randint(50, len(sequence) - 50)
     side = random.choice((0, 1))
 
-    halves = sequence[:pivot], sequence[:pivot]
+    halves = sequence[:pivot], sequence[pivot:]
 
     return halves[side]
 
