@@ -5,6 +5,7 @@ import json
 import random
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
+from functools import partial
 from typing import Dict, Tuple, Union
 import pandas as pd
 
@@ -139,9 +140,8 @@ def create_dummy_jsons(strain: str, truncations: Truncations,
     return temp_json_path
 
 
-def simulate_recovery(trunc_count: int, miss_count: int, json_dir: Path,
-                      temp_dir: Path, outdir: Path,
-                      model_path: Path) -> Dict[str, pd.Series]:
+def _simulate_recovery(trunc_count: int, miss_count: int, temp_dir: Path,
+                       outdir: Path, model: Path) -> Tuple[str, pd.Series]:
     """Simulates recovery of missing or truncated alleles by synthetically
     introducing these errors into error-free allele calls.
 
@@ -154,34 +154,49 @@ def simulate_recovery(trunc_count: int, miss_count: int, json_dir: Path,
     :param temp_dir:    Location of the directory containing temporary dummy
                         JSONs created by this function
     :param outdir:      Location to write crowbar recovery JSONs
-    :param model_path:  Location of a pre-trained crowbar model
+    :param model:       Location of a pre-trained crowbar model
 
     :return:            Dict relating each strain name to its modified profile
     """
 
+
+    strain_name = genome_path.stem
+
+    strain_profile = crowbar.load_genome(genome_path)
+
+    modified_profile, truncations = modify_row(strain_profile, trunc_count,
+                                               miss_count, json_dir)
+
+    temp_json = create_dummy_jsons(strain_name, truncations, temp_dir)
+
+    repaired_calls, probabilities = crowbar.recover(modified_profile,
+                                                    temp_json, model)
+
+    crowbar.write_results(repaired_calls, probabilities, outdir)
+
+    return strain_name, modified_profile
+
+
+def simulate_recovery(trunc_count: int, miss_count: int, json_dir: Path,
+                      temp_dir: Path, outdir: Path, model: Path, cores: int):
+
+
     jsons = json_dir.glob('*.json')
 
-    profiles = {}
+    sim_recov = partial(_simulate_recovery,
+                        trunc_count=trunc_count,
+                        miss_count=miss_count,
+                        temp_dir=temp_dir,
+                        outdir=outdir,
+                        model=model)
 
-    for genome_path in jsons:
+    with ProcessPoolExecutor(cores) as ppe:
 
-        strain_name = genome_path.stem
+        profiles = ppe.map(sim_recov, jsons)
 
-        strain_profile = crowbar.load_genome(genome_path)
+    strain_profiles = dict(profiles)
 
-        modified_profile, truncations = modify_row(strain_profile, trunc_count,
-                                                   miss_count, json_dir)
-
-        temp_json = create_dummy_jsons(strain_name, truncations, temp_dir)
-
-        repaired_calls, probabilities = crowbar.recover(modified_profile,
-                                                        temp_json, model_path)
-
-        crowbar.write_results(repaired_calls, probabilities, outdir)
-
-        profiles[strain_name] = modified_profile
-
-    return profiles
+    return strain_profiles
 
 
 def compare_to_known(simulation_outdir: Path,
