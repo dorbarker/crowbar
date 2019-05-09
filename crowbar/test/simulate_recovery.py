@@ -70,6 +70,11 @@ def arguments():
                         required=True,
                         help='Path to pre-trained model')
 
+    parser.add_argument('-j', '--cores',
+                        type=int,
+                        default=1,
+                        help='Number of CPU cores to use [1]')
+
     args = parser.parse_args()
 
     model_jsons = args.model / 'jsons'
@@ -140,8 +145,9 @@ def create_dummy_jsons(strain: str, truncations: Truncations,
     return temp_json_path
 
 
-def _simulate_recovery(trunc_count: int, miss_count: int, temp_dir: Path,
-                       outdir: Path, model: Path) -> Tuple[str, pd.Series]:
+def _simulate_recovery(genome_path: Path, trunc_count: int, miss_count: int,
+                       temp_dir: Path, outdir: Path,
+                       model: Path) -> Tuple[str, pd.Series]:
     """Simulates recovery of missing or truncated alleles by synthetically
     introducing these errors into error-free allele calls.
 
@@ -254,7 +260,8 @@ def main():
 
     modified_profiles = simulate_recovery(args.trunc_count, args.miss_count,
                                           args.test_jsons, args.tempdir,
-                                          args.out_jsons, args.model)
+                                          args.out_jsons, args.model,
+                                          args.cores)
 
     results = compare_to_known(args.out_jsons, args.test_jsons, modified_profiles)
 
