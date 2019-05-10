@@ -17,12 +17,10 @@ import crowbar  # main script
 # Complex types
 Truncations = Dict[str, str]
 SimulationResults = Dict[str, Dict[str, Union[str, float]]]
+PathTable = Dict[str, Path]
 
 def arguments():
 
-    def get_temp_dir():
-
-        return Path(os.environ.get('XDG_RUNTIME_DIR') or '/tmp')
 
     parser = argparse.ArgumentParser()
 
@@ -50,17 +48,7 @@ def arguments():
                         required=True,
                         help='Directory containing FSAC-format JSONs')
 
-    parser.add_argument('--out-jsons',
-                        type=Path,
-                        required=True,
-                        help='Directory for recovery JSONs')
-
-    parser.add_argument('--tempdir',
-                        type=Path,
-                        default=get_temp_dir(),
-                        help='Directory for ephemeral working files')
-
-    parser.add_argument('--output',
+    parser.add_argument('--outdir',
                         type=Path,
                         required=True,
                         help='Output path')
@@ -77,18 +65,11 @@ def arguments():
 
     args = parser.parse_args()
 
-    model_jsons = args.model / 'jsons'
-
-    if args.tempdir == model_jsons:
-
-        msg = '--tempdir [{}] cannot be the JSON directory of the model [{}]'
-        sys.exit(msg.format(args.tempdir, model_jsons))
-
     return args
 
 
 def modify_row(strain_profile: pd.Series, trunc_count: int, miss_count: int,
-               jsondir: Path) -> Tuple[pd.Series, Truncations]:
+               paths: PathTable) -> Tuple[pd.Series, Truncations]:
 
     to_truncate = random.sample(strain_profile.index, k=trunc_count)
     to_vanish = random.sample(strain_profile.index, k=miss_count)
@@ -96,13 +77,13 @@ def modify_row(strain_profile: pd.Series, trunc_count: int, miss_count: int,
     strain_profile[to_truncate] = -1
     strain_profile[to_vanish] = 0
 
-    truncs = {gene: truncate(strain_profile.name, gene, jsondir)
+    truncs = {gene: truncate(strain_profile.name, gene, paths)
               for gene in strain_profile[to_truncate].index}
 
     return strain_profile, truncs
 
 
-def truncate(strain: str, gene: str, jsondir: Path) -> str:
+def truncate(strain: str, gene: str, paths: PathTable) -> str:
     """Loads a partial nucleotide alignment from fsac-generated JSON
     output.
 
@@ -111,12 +92,11 @@ def truncate(strain: str, gene: str, jsondir: Path) -> str:
 
     :param strain:  The basename of the query strain
     :param gene:    The current query gene
-    :param jsondir: Path to the directory containing FSAC input JSONs
-
+    :param paths:   Dictionary of relevant paths
     :return:        A partial DNA sequence of at least length 50
     """
 
-    jsonpath = (jsondir / strain).with_suffix('.json')
+    jsonpath = paths['test'].joinpath(strain).with_suffix('.json')
 
     with jsonpath.open('r') as json_obj:
         data = json.load(json_obj)
@@ -133,21 +113,32 @@ def truncate(strain: str, gene: str, jsondir: Path) -> str:
 
 
 def create_dummy_jsons(strain: str, truncations: Truncations,
-                       tempdir: Path) -> Path:
+                       paths: PathTable) -> Path:
+    """Creates simplified JSONs containing sequence data for artificially
+    truncated genes. These JSONs are compatible with FSAC JSONs.
+
+    Because the recovery algorithm only refers to the JSONs in cases where
+    partial sequence data are available, only genes with artificial truncations
+    are written.
+
+    :param strain:      Basename of the genome
+    :param truncations: A Dict mapping partial sequence data to gene names
+    :param paths:       Dictionary of relevant paths
+    :return:            Path to the simulated FSAC JSON
+    """
 
     genes = {gene: {'SubjAln': seq} for gene, seq in truncations.items()}
 
-    temp_json_path = (tempdir / strain).with_suffix('.json')
+    sim_json_path = paths['simulated'].joinpath(strain).with_suffix('.json')
 
-    with temp_json_path.open('w') as out:
+    with sim_json_path.open('w') as out:
         json.dump(genes, out)
 
-    return temp_json_path
+    return sim_json_path
 
 
 def _simulate_recovery(genome_path: Path, trunc_count: int, miss_count: int,
-                       temp_dir: Path, outdir: Path,
-                       model: Path) -> Tuple[str, pd.Series]:
+                       paths: PathTable) -> Tuple[str, pd.Series]:
     """Simulates recovery of missing or truncated alleles by synthetically
     introducing these errors into error-free allele calls.
 
@@ -156,12 +147,8 @@ def _simulate_recovery(genome_path: Path, trunc_count: int, miss_count: int,
 
     :param trunc_count: Number of truncations to insert in each profile
     :param miss_count:  Number of missing alleles to insert in each profile
-    :param json_dir:    Location of the directory containing FSAC JSONs
-    :param temp_dir:    Location of the directory containing temporary dummy
+    :param paths:       Dictionary of relevant paths
                         JSONs created by this function
-    :param outdir:      Location to write crowbar recovery JSONs
-    :param model:       Location of a pre-trained crowbar model
-
     :return:            Dict relating each strain name to its modified profile
     """
 
@@ -171,30 +158,29 @@ def _simulate_recovery(genome_path: Path, trunc_count: int, miss_count: int,
     strain_profile = crowbar.load_genome(genome_path)
 
     modified_profile, truncations = modify_row(strain_profile, trunc_count,
-                                               miss_count, json_dir)
+                                               miss_count, paths)
 
-    temp_json = create_dummy_jsons(strain_name, truncations, temp_dir)
+    temp_json = create_dummy_jsons(strain_name, truncations, paths)
 
     repaired_calls, probabilities = crowbar.recover(modified_profile,
-                                                    temp_json, model)
+                                                    paths['simulated'],
+                                                    paths['model'])
 
-    crowbar.write_results(repaired_calls, probabilities, outdir)
+    crowbar.write_results(repaired_calls, probabilities, paths['recovered'])
 
     return strain_name, modified_profile
 
 
-def simulate_recovery(trunc_count: int, miss_count: int, json_dir: Path,
-                      temp_dir: Path, outdir: Path, model: Path, cores: int):
+def simulate_recovery(trunc_count: int, miss_count: int, paths: PathTable,
+                      cores: int) -> Dict[str, pd.Series]:
 
 
-    jsons = json_dir.glob('*.json')
+    jsons = paths['test'].glob('*.json')
 
     sim_recov = partial(_simulate_recovery,
                         trunc_count=trunc_count,
                         miss_count=miss_count,
-                        temp_dir=temp_dir,
-                        outdir=outdir,
-                        model=model)
+                        paths=paths)
 
     with ProcessPoolExecutor(cores) as ppe:
 
@@ -205,19 +191,18 @@ def simulate_recovery(trunc_count: int, miss_count: int, json_dir: Path,
     return strain_profiles
 
 
-def compare_to_known(simulation_outdir: Path,
-                     known_jsondir: Path,
-                     strain_profiles: Dict[str, pd.Series]) -> SimulationResults:
+def compare_to_known(strain_profiles: Dict[str, pd.Series],
+                     paths: PathTable) -> SimulationResults:
     # Compare maximum probabiltiy from JSON to known result
     # {gene: {allele: probability}}
 
     results = {}
 
-    simulated_jsons = simulation_outdir.glob('*.json')
+    simulated_jsons = paths['recovered'].glob('*.json')
 
     for simulated_json in simulated_jsons:
 
-        known_json = known_jsondir / simulated_json.name
+        known_json = paths['test'] / simulated_json.name
 
         strain = simulated_json.stem
 
@@ -247,25 +232,47 @@ def compare_to_known(simulation_outdir: Path,
     return results
 
 
-def summarize_results(results: SimulationResults, result_out: Path):
+def summarize_results(results: SimulationResults, paths: PathTable):
 
     df_results = pd.DataFrame(results).T
 
-    df_results.to_csv(result_out, sep='\t', index=False)
+    df_results.to_csv(paths['report'], sep='\t', index=False)
+
+
+def create_path_table(parent: Path, test_jsons: Path, model: Path) -> PathTable:
+    """Helper function for ensuring that output paths are handled in a
+    consistent manner.
+
+    :param _parent:     The parent directory for all program output
+    :param test_jsons:  Directory containing the query JSONs
+    :param model:       Path to the pre-trained recovery model
+    :return:            Dict containing output paths
+    """
+
+    paths = {
+        'test':         test_jsons,
+        'model':        model,
+        'simulated':    parent / 'simulated_truncations',
+        'recovered':    parent / 'recovered',
+        'report':       parent / 'report.txt'
+    }
+
+    return paths
 
 
 def main():
 
     args = arguments()
 
+    paths = create_path_table(args.outdir, args.test_jsons, args.model)
+
     modified_profiles = simulate_recovery(args.trunc_count, args.miss_count,
-                                          args.test_jsons, args.tempdir,
-                                          args.out_jsons, args.model,
-                                          args.cores)
+                                          paths, args.cores)
 
-    results = compare_to_known(args.out_jsons, args.test_jsons, modified_profiles)
+    results = compare_to_known(modified_profiles, paths)
 
-    summarize_results(results, args.output)
+    summarize_results(results, paths)
+
 
 if __name__ == '__main__':
     main()
