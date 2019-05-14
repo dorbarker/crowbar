@@ -24,11 +24,6 @@ def arguments():
 
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--cores',
-                        type=int,
-                        default=1,
-                        help='Number of CPU cores to use [1]')
-
     parser.add_argument('--truncation-probability',
                         type=float,
                         default=0.0,
@@ -113,7 +108,7 @@ def truncate(strain: str, gene: str, paths: PathTable) -> str:
 
 
 def create_dummy_jsons(strain: str, truncations: Truncations,
-                       paths: PathTable) -> Path:
+                       paths: PathTable) -> None:
     """Creates simplified JSONs containing sequence data for artificially
     truncated genes. These JSONs are compatible with FSAC JSONs.
 
@@ -133,8 +128,6 @@ def create_dummy_jsons(strain: str, truncations: Truncations,
 
     with sim_json_path.open('w') as out:
         json.dump(genes, out)
-
-    return sim_json_path
 
 
 def _simulate_recovery(genome_path: Path, trunc_count: int, miss_count: int,
@@ -160,7 +153,7 @@ def _simulate_recovery(genome_path: Path, trunc_count: int, miss_count: int,
     modified_profile, truncations = modify_row(strain_profile, trunc_count,
                                                miss_count, paths)
 
-    temp_json = create_dummy_jsons(strain_name, truncations, paths)
+    create_dummy_jsons(strain_name, truncations, paths)
 
     repaired_calls, probabilities = crowbar.recover(modified_profile,
                                                     paths['simulated'],
