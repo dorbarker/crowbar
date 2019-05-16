@@ -68,7 +68,7 @@ def build_model(calls: pd.DataFrame, alleles_dir: Path,
 
 def load_calls(calls_path: Path) -> pd.DataFrame:
 
-    raw_calls = pd.read_csv(calls_path, index_col=0, dtype=int)
+    raw_calls = pd.read_csv(calls_path, sep=',', index_col=0)
 
     calls = raw_calls.loc[[not any(v < 1) for i, v in raw_calls.iterrows()]]
 
