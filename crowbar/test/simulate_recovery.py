@@ -63,11 +63,11 @@ def arguments():
     return args
 
 
-def modify_row(strain_profile: pd.Series, trunc_count: int, miss_count: int,
+def modify_row(strain_profile: pd.Series, trunc_prob: float, miss_prob: float,
                paths: PathTable) -> Tuple[pd.Series, Truncations]:
 
-    to_truncate = random.sample(strain_profile.index, k=trunc_count)
-    to_vanish = random.sample(strain_profile.index, k=miss_count)
+    to_truncate = [random.random() < trunc_prob for _ in strain_profile]
+    to_vanish   = [random.random() < miss_prob for _ in strain_profile]
 
     strain_profile[to_truncate] = -1
     strain_profile[to_vanish] = 0
@@ -130,7 +130,7 @@ def create_dummy_jsons(strain: str, truncations: Truncations,
         json.dump(genes, out)
 
 
-def _simulate_recovery(genome_path: Path, trunc_count: int, miss_count: int,
+def _simulate_recovery(genome_path: Path, trunc_prob: float, miss_prob: float,
                        paths: PathTable) -> Tuple[str, pd.Series]:
     """Simulates recovery of missing or truncated alleles by synthetically
     introducing these errors into error-free allele calls.
@@ -150,8 +150,8 @@ def _simulate_recovery(genome_path: Path, trunc_count: int, miss_count: int,
 
     strain_profile = crowbar.load_genome(genome_path)
 
-    modified_profile, truncations = modify_row(strain_profile, trunc_count,
-                                               miss_count, paths)
+    modified_profile, truncations = modify_row(strain_profile, trunc_prob,
+                                               miss_prob, paths)
 
     create_dummy_jsons(strain_name, truncations, paths)
 
@@ -164,15 +164,15 @@ def _simulate_recovery(genome_path: Path, trunc_count: int, miss_count: int,
     return strain_name, modified_profile
 
 
-def simulate_recovery(trunc_count: int, miss_count: int, paths: PathTable,
+def simulate_recovery(trunc_prob: float, miss_prob: float, paths: PathTable,
                       cores: int) -> Dict[str, pd.Series]:
 
 
     jsons = paths['test'].glob('*.json')
 
     sim_recov = partial(_simulate_recovery,
-                        trunc_count=trunc_count,
-                        miss_count=miss_count,
+                        trunc_count=trunc_prob,
+                        miss_count=miss_prob,
                         paths=paths)
 
     with ProcessPoolExecutor(cores) as ppe:
