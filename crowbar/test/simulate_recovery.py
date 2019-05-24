@@ -138,8 +138,10 @@ def _simulate_recovery(genome_path: Path, trunc_prob: float, miss_prob: float,
     After generating these synthetic errors and saves them into FSAC-formatted
     JSON files, it uses crowbar to attempt to recover these allele calls.
 
-    :param trunc_count: Number of truncations to insert in each profile
-    :param miss_count:  Number of missing alleles to insert in each profile
+    :param trunc_prob:  Uniform probability of truncations to insert in each
+                        profile
+    :param miss_prob:   Uniform probability of missing alleles to insert in
+                        each profile
     :param paths:       Dictionary of relevant paths
                         JSONs created by this function
     :return:            Dict relating each strain name to its modified profile
@@ -171,8 +173,8 @@ def simulate_recovery(trunc_prob: float, miss_prob: float, paths: PathTable,
     jsons = paths['test'].glob('*.json')
 
     sim_recov = partial(_simulate_recovery,
-                        trunc_count=trunc_prob,
-                        miss_count=miss_prob,
+                        trunc_prob=trunc_prob,
+                        miss_prob=miss_prob,
                         paths=paths)
 
     with ProcessPoolExecutor(cores) as ppe:
