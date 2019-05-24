@@ -129,6 +129,8 @@ def create_dummy_jsons(strain: str, truncations: Truncations,
     with sim_json_path.open('w') as out:
         json.dump(genes, out)
 
+    return sim_json_path
+
 
 def _simulate_recovery(genome_path: Path, trunc_prob: float, miss_prob: float,
                        paths: PathTable) -> Tuple[str, pd.Series]:
@@ -155,10 +157,10 @@ def _simulate_recovery(genome_path: Path, trunc_prob: float, miss_prob: float,
     modified_profile, truncations = modify_row(strain_profile, trunc_prob,
                                                miss_prob, paths)
 
-    create_dummy_jsons(strain_name, truncations, paths)
+    sim_json_path = create_dummy_jsons(strain_name, truncations, paths)
 
     repaired_calls, probabilities = crowbar.recover(modified_profile,
-                                                    paths['simulated'],
+                                                    sim_json_path,
                                                     paths['model'])
 
     crowbar.write_results(repaired_calls, probabilities, paths['recovered'])
