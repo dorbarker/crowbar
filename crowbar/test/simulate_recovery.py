@@ -259,7 +259,7 @@ def main():
 
     paths = create_path_table(args.outdir, args.test_jsons, args.model)
 
-    modified_profiles = simulate_recovery(args.trunc_count, args.miss_count,
+    modified_profiles = simulate_recovery(args.trunc_prob, args.miss_prob,
                                           paths, args.cores)
 
     results = compare_to_known(modified_profiles, paths)
