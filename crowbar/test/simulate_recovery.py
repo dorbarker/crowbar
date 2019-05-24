@@ -252,6 +252,9 @@ def create_path_table(parent: Path, test_jsons: Path, model: Path) -> PathTable:
         'report':       parent / 'report.txt'
     }
 
+    paths['simulated'].mkdir(parents=True)
+    paths['recovered'].mkdir()
+
     return paths
 
 
