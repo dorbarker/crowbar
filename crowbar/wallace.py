@@ -27,9 +27,9 @@ def mismatch(ct: pd.DataFrame):
 
     a = f(ct)
 
-    b = f(col_sums) - a
+    b = f(row_sums) - a
 
-    c = f(row_sums) - a
+    c = f(col_sums) - a
 
     d = ((n * (n - 1)) / 2) - (b + a) - c
 
@@ -49,7 +49,7 @@ def simpsons(classifications: pd.Series) -> float:
 
 def wallace(mismatches) -> float:
 
-    return mismatches.a / (mismatches.a + mismatches.c)
+    return mismatches.a / (mismatches.a + mismatches.b)
 
 
 def adj_wallace(partition_a: str, partition_b: str,
@@ -61,13 +61,11 @@ def adj_wallace(partition_a: str, partition_b: str,
 
     sid_b = simpsons(calls[partition_b])
 
-    wallace_b_a = wallace(mismatches)
+    wallace_a_b = wallace(mismatches)
 
     wallace_i = 1 - sid_b
 
-    awc_using_wallace_b_a = (wallace_b_a - wallace_i) / (1 - wallace_i)
+    awc = (wallace_a_b - wallace_i) / (1 - wallace_i)
 
-    return awc_using_wallace_b_a  # mimics the behaviour of Comparing Partitions
-
-
+    return awc
 

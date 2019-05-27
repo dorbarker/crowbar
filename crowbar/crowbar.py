@@ -75,7 +75,12 @@ def nearest_neighbour(strain_profile: pd.Series, gene: str,
 
         shared = [a and b for a, b in zip(s1, s2)]
 
-        return sum(strain1[shared] == strain2[shared]) / sum(shared)
+        identical_calls = [x == y for x, y
+                           in zip(strain1[shared], strain2[shared])]
+
+        percentage_shared = sum(identical_calls) / sum(shared)
+
+        return percentage_shared
 
 
     similarities = [(row_strain, percent_shared(strain_profile, row_profile))

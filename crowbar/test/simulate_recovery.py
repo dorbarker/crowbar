@@ -108,7 +108,7 @@ def truncate(strain: str, gene: str, paths: PathTable) -> str:
 
 
 def create_dummy_jsons(strain: str, truncations: Truncations,
-                       paths: PathTable) -> None:
+                       paths: PathTable) -> Path:
     """Creates simplified JSONs containing sequence data for artificially
     truncated genes. These JSONs are compatible with FSAC JSONs.
 
@@ -122,9 +122,19 @@ def create_dummy_jsons(strain: str, truncations: Truncations,
     :return:            Path to the simulated FSAC JSON
     """
 
-    genes = {gene: {'SubjAln': seq} for gene, seq in truncations.items()}
-
+    test_json_path = paths['test'].joinpath(strain).with_suffix('.json')
     sim_json_path = paths['simulated'].joinpath(strain).with_suffix('.json')
+
+    with test_json_path.open('r') as original_json:
+        original = json.load(original_json)
+
+    # Return the truncated version of the sequence if it's available,
+    # otherwise return the complete version from the original JSON
+    seqs = ((gene, truncations.get(gene, original[gene]['SubjAln']))
+            for gene in original.keys())
+
+    genes = {gene: {'SubjAln': seq} for gene, seq in seqs}
+
 
     with sim_json_path.open('w') as out:
         json.dump(genes, out)
@@ -213,8 +223,11 @@ def compare_to_known(strain_profiles: Dict[str, pd.Series],
 
             alleles = simulated[gene]
 
-            likeliest_allele, second_allele = sorted(alleles,
-                                                     key=lambda x: alleles[x])
+            alleles_by_probability = sorted(alleles,
+                                            key=lambda x: alleles[x],
+                                            reverse=True)
+
+            likeliest_allele, second_allele, *_ = alleles_by_probability
 
             actual_allele = known[gene]['MarkerMatch']
 
