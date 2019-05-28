@@ -19,6 +19,9 @@ Truncations = Dict[str, str]
 SimulationResults = Dict[str, Dict[str, Union[str, float]]]
 PathTable = Dict[str, Path]
 
+import numpy as np
+np.seterr(all='raise')
+
 def arguments():
 
 
@@ -227,7 +230,16 @@ def compare_to_known(strain_profiles: Dict[str, pd.Series],
                                             key=lambda x: alleles[x],
                                             reverse=True)
 
-            likeliest_allele, second_allele, *_ = alleles_by_probability
+            try:
+
+                likeliest_allele, second_allele, *_ = alleles_by_probability
+
+            except ValueError:
+                # Only a hypothetical allele is possible, given the model
+
+                likeliest_allele, *_ = alleles_by_probability
+
+                second_allele = likeliest_allele
 
             actual_allele = known[gene]['MarkerMatch']
 

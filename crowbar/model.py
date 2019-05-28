@@ -13,6 +13,7 @@ import wallace
 Abundance = Dict[str, Dict[str, int]]
 Triplets = Dict[str, Dict[str, Tuple[str, float]]]
 
+
 def arguments():
 
     parser = argparse.ArgumentParser()
@@ -171,21 +172,6 @@ def write_json(values: Dict, name: str, model_path: Path) -> None:
 
     with output_path.open('w') as f:
         json.dump(values, f, indent=4)
-
-
-def calculate_distance_matrix(calls_path: Path, model_path: Path) -> None:
-    """Calculates a hamming distance matrix using the external `hamming` tool.
-    https://gitlab.com/dorbarker/hamming
-
-    cargo install --git https://gitlab.com/dorbarker/hamming.git
-
-    :param calls_path: Path to the input allele calls
-    :param model_path: Directory containing the model
-    """
-
-    cmd = ('hamming', '--input', str(calls_path), '--output', str(model_path))
-
-    subprocess.run(cmd, check=True)
 
 
 if __name__ == '__main__':
