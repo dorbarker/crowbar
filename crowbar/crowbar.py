@@ -1,4 +1,5 @@
 import argparse
+import itertools
 import json
 import re
 import math
@@ -20,7 +21,6 @@ import numpy as np
 from Bio import SeqIO
 
 # Local imports
-import richness_estimate
 from shared import user_msg, logtime, hamming_distance_matrix
 
 # Complex type constants
@@ -31,82 +31,34 @@ ABUNDANCE = Dict[Union[str, int], float]
 
 Neighbour = namedtuple('Neighbour', ('indices', 'alleles', 'similarity'))
 
+NeighbourAlleles = List[Tuple[str, float]]
+AlleleProb = Dict[str, float]
 
 def arguments():
     """Gather command line arguments for crowbar.py"""
 
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--cores',
-                        type=int,
-                        default=1,
-                        help='Number of CPU cores to use [1]')
-
-    parser.add_argument('--replicates',
-                        type=int,
-                        default=100,
-                        help='Replicates for the Monte Carlo estimation of \
-                              the probability of finding a novel allele')
-
-    parser.add_argument('--seed',
-                        type=int,
-                        default=1,
-                        help='Seed to initialize the Monte Carlo simulation')
-
-    parser.add_argument('--reference',
+    parser.add_argument('-i', '--input',
                         type=Path,
                         required=True,
-                        help='Path to reference genome')
+                        help='Path to input fsac-formatted JSON')
 
-    parser.add_argument('--distances',
+    parser.add_argument('-o', '--output',
                         type=Path,
-                        required=False,
-                        help='Path to pre-calculated distance matrix')
+                        required=True,
+                        help='Path to output directory')
 
-    parser.add_argument('--output',
+    parser.add_argument('--model',
                         type=Path,
-                        required=False,
-                        help='JSON-formatted output destination [stdout]')
-
-    parser.add_argument('calls',
-                        type=Path,
-                        help='Table of allele calls')
-
-    parser.add_argument('genes',
-                        type=Path,
-                        help='Directory of gene multifastas')
-
-    parser.add_argument('jsons',
-                        type=Path,
-                        help='Directory containing MIST results')
+                        required=True,
+                        help='Path to recovery model')
 
     return parser.parse_args()
 
 
-def gene_allele_abundances(calls: pd.DataFrame, replicates: int,
-                           seed: int, cores: int) -> Dict[str, float]:
-    """Get the allele probabilities, including the those of a novel allele,
-    for every gene in `calls`.
-
-    Runs in parallel.
-    """
-
-    query_genes = calls.apply(lambda col: any(col < 1), axis=0).keys()
-
-    with ProcessPoolExecutor(max_workers=cores) as ppe:
-
-        get_allele_abundances = partial(allele_abundances,
-                                        calls=calls,
-                                        replicates=replicates,
-                                        seed=seed)
-
-        abundances = dict(ppe.map(get_allele_abundances, query_genes))
-
-    return abundances
-
-
-def nearest_neighbour(gene: str, strain: str,  # included_fragments: Set[int],
-                      distances: np.matrix, calls: pd.DataFrame) -> Neighbour:
+def nearest_neighbour(strain_profile: pd.Series, gene: str,
+                      model_calls: pd.DataFrame) -> NeighbourAlleles:
     """Finds the nearest neighbour(s) to `strain`, and returns a Neighbour
     namedtuple containing the row indices in `calls` of its closest relatives,
     the allele(s) present at `gene`, and their percent Hamming similarity.
@@ -117,283 +69,171 @@ def nearest_neighbour(gene: str, strain: str,  # included_fragments: Set[int],
         distance of non-missing loci.
         """
 
-        shared = [a and b for a, b in zip(strain1 > 0, strain2 > 0)]
+        missing = [0, -1]
+        s1 = ~strain1.isin(missing)
+        s2 = ~strain2.isin(missing)
 
-        return sum(strain1[shared] == strain2[shared]) / sum(shared)
+        shared = [a and b for a, b in zip(s1, s2)]
 
-    def closest_relatives() -> List[int]:
-        """Return the row indices of the closest relatives of `strain`."""
+        identical_calls = [x == y for x, y
+                           in zip(strain1[shared], strain2[shared])]
 
-        strain_index = tuple(calls.index).index(strain)
-        strain_distances = np.array(distances[strain_index].flat)
+        percentage_shared = sum(identical_calls) / sum(shared)
 
-        not_self = [strain_distances[:strain_index],
-                    strain_distances[strain_index + 1:]]
+        return percentage_shared
 
-        non_self_distances = np.concatenate(not_self)
 
-        minimum_distance = min(non_self_distances)
+    similarities = [(row_strain, percent_shared(strain_profile, row_profile))
+                    for row_strain, row_profile in model_calls.iterrows()]
 
-        indices = np.where(strain_distances == minimum_distance)[0]
+    sorted_similarities = list(reversed(sorted(similarities, key=lambda x: x[1])))
 
-        # If the minimum dist is 0, it will still match to self here,
-        # so ensure the query index is not in the return value
-        closest = sorted(set(indices) - {strain_index})
+    max_similarity = sorted_similarities[0][1]
 
-        return closest
+    neighbours = itertools.takewhile(lambda x: x[1] == max_similarity,
+                                     sorted_similarities)
 
-    def closest_relative_allele(closest_relative_indices) -> List[int]:
-        """For each of the genome indices specified by
-        `closest_relative_indices`, return the allele found at `gene`.
-        """
-        closest_relative_alleles = calls[gene].iloc[closest_relative_indices]
+    neighbouring_alleles = [(model_calls.loc[row_strain, gene], similarity)
+                            for row_strain, similarity in neighbours]
 
-        return closest_relative_alleles
+    return neighbouring_alleles
 
-    closest_indices = closest_relatives()
 
-    closest_alleles = closest_relative_allele(closest_indices)
+def neighbour_allele_probabilities(neighbouring_alleles: NeighbourAlleles,
+                                   abundances: AlleleProb) -> AlleleProb:
 
-    similarity = percent_shared(calls.loc[strain],
-                                calls.iloc[closest_indices[0]])
+    neighbours, similarities = zip(*neighbouring_alleles)
+    similarity, *_ = similarities
 
-    neighbour = Neighbour(closest_indices, closest_alleles, similarity)
-
-    return neighbour
-
-
-def find_locus_in_reference(gene: Path, reference: Path) -> Tuple[str, int]:
-
-    def find_locus_location(seq: str) -> int:
-        """Executes a BLASTn search for a core gene against a reference genome.
-
-        Returns the minimum of the start and stop locations of the gene
-        so that gene calls can be ordered relative to the reference genome.
-        """
-
-        blast = ('blastn', '-task', 'megablast', '-subject', str(reference),
-                 '-outfmt', '10')
-
-        string_result = subprocess.run(blast, universal_newlines=True,
-                                       check=True, input=seq,
-                                       stdout=subprocess.PIPE)
-
-        table_result = pd.read_table(StringIO(string_result.stdout),
-                                     sep=',', header=None)
-
-        # best row should be first
-        # sstart, ssend = 8, 9
-        start, stop = table_result.iloc[0, [8, 9]]
-
-        return min(start, stop)
-
-    gene_name = gene.stem
-
-    with gene.open('r') as fasta:
-
-        # Use just the first record
-        rec = next(SeqIO.parse(fasta, 'fasta'))
-
-        query = str(rec.seq)
-
-        loc = find_locus_location(query)
-
-    return gene_name, loc
-
-
-def order_on_reference(reference: Path, genes: Path, calls: pd.DataFrame,
-                       cores: int) -> pd.DataFrame:
-    """Reorders `calls` columns to reflect the gene order found in `reference`.
-
-    This is to facilitate analysis of gene linkage.
-    """
-
-    fasta_files = (gene for gene in genes.glob('*.fasta')
-                   if gene.stem in calls.columns)
-
-    with ProcessPoolExecutor(max_workers=cores) as ppe:
-
-        find_locus = partial(find_locus_in_reference, reference=reference)
-
-        gene_locations = list(ppe.map(find_locus, fasta_files))
-
-    ordered_gene_locations = sorted(gene_locations, key=operator.itemgetter(1))
-
-    ordered_gene_names, ordered_locs = zip(*ordered_gene_locations)
-
-    return calls.reindex(ordered_gene_names, axis=1)
-
-
-def flank_linkage(strain: str, gene: str, hypothesis: int, gene_abundances,
-                  calls: pd.DataFrame) -> Tuple[float, float]:
-    """For three genes, (Left, Centre, Right), count how many observations of
-    Centre were associated with the flanking genes Left and Right.
-    """
-
-    possible = np.array([a for a in gene_abundances[gene].keys() if a != '?'])
-
-    columns = tuple(calls.columns)
-    gene_loc = columns.index(gene)
-
-    left_col = columns[gene_loc - 1]
-
-    # Wrap around if the centre gene is already the rightmost column
-    try:
-        right_col = columns[gene_loc + 1]
-    except IndexError:
-        right_col = columns[0]
-
-    flank_left, flank_right = calls[[left_col, right_col]].loc[strain]
-
-    left = np.array(calls[left_col])
-    rght = np.array(calls[right_col])
-    cntr = np.array(calls[gene])
-
-    has_flank = (left == flank_left) & \
-                (rght == flank_right) & \
-                (np.isin(cntr, possible))
-
-    with warnings.catch_warnings():
-
-        warnings.simplefilter('ignore')
-
-        try:
-            is_h = (calls[gene] == hypothesis)
-
-            flanks_given_h = (has_flank & is_h).sum() / is_h.sum()
-
-            if math.isnan(flanks_given_h):
-                raise TypeError
-
-        except TypeError:
-
-            flanks_given_h = 0
-
-    # If hypothesis is *never* observed with these flanks, it's not
-    # impossible - merely unlikely. Use the probability of an unobserved allele
-    # as the base probability
-    return flanks_given_h or gene_abundances[gene]['?']
-
-
-def partial_sequence_match(strain: str, gene: str, genes: Path,
-                           jsondir: Path) -> Set[int]:
-    """Attempts to use partial sequence data to exclude possible alleles."""
-
-    def load_fragment() -> str:
-        """Loads a partial nucleotide alignment from FSAC-generated JSON output.
-
-        :return: A partial gene alignment as a str
-        """
-
-        jsonpath = (jsondir / strain).with_suffix('.json')
-
-        with jsonpath.open('r') as json_obj:
-            data = json.load(json_obj)
-
-        return data[gene]['SubjAln']
-
-    def fragment_match(seq: str) -> Set[int]:
-        """Attempts to match partial sequence data to a known allele from
-        a multifasta file. Matches are only attemped at the beginning and end
-        of the gene.
-        """
-
-        fragment_pattern = re.compile('(^{seq})|({seq}$)'.format(seq=seq))
-
-        glob_pattern = '*{}.f*'.format(gene)
-        gene_file, *_ = genes.glob(glob_pattern)
-
-        with gene_file.open('r') as fasta:
-
-            result = set(int(rec.id) for rec in SeqIO.parse(fasta, 'fasta')
-                         if re.search(fragment_pattern, str(rec.seq)))
-
-        return result
-
-    fragment = load_fragment()
-
-    matches = fragment_match(fragment)
-
-    return matches
-
-
-def allele_abundances(gene: str, calls: pd.DataFrame, replicates: int = 1000,
-                      seed: int = 1) -> Tuple[str, ABUNDANCE]:
-    """Calculates the abundances of alleles for a given gene and attempts to
-    determine the probability that the next observation will be a new allele.
-    """
-
-    def account_for_unknown(freq: int, observations: int,
-                            unknown: float) -> float:
-
-        return (freq / observations) - unknown
-
-    observed_alleles = richness_estimate.Population(calls[gene])
-
-    n_alleles = len(observed_alleles.abundance)
-
-    discoveries = observed_alleles.monte_carlo(replicates, seed)
-
-    last_percentile = max(1, int(0.01 * len(discoveries)))
-
-    last_percentile_discovery_rate = mean(discoveries[-last_percentile:])
-
-    to_subtract_from_known = last_percentile_discovery_rate / n_alleles
-
-    account_for_unknown_ = partial(account_for_unknown,
-                                   observations=len(observed_alleles),
-                                   unknown=to_subtract_from_known)
-
-    abundance = {allele: account_for_unknown_(frequency)
-                 for allele, frequency
-                 in observed_alleles.abundance.items()}
-
-    abundance['?'] = last_percentile_discovery_rate
-
-    return gene, abundance
-
-
-def redistribute_allele_probability(abundances, fragment_matches):
-    """Filters alleles ruled out by fragment matching and recalculates
-    abundance proportions.
-    """
-
-    filtered_abundances = {k: v
-                           for k, v in abundances.items()
-                           if k in fragment_matches or k == '?'}
-
-    total_remaining_probability = sum(filtered_abundances.values())
-
-    adjusted_abundances = {k: v / total_remaining_probability
-                           for k, v in filtered_abundances.items()}
-
-    return adjusted_abundances
-
-
-def neighbour_similarities(neighbour: Neighbour,
-                           abundances: Dict[Union[int, str], float]):
-    """Use weighting for multiple observations of the same neightbour allele"""
-
-    allele_proportions = Counter(neighbour.alleles)
+    allele_counts = Counter(neighbours)
 
     combined_probs = {}
 
-    for k, abund in abundances.items():
+    for allele, abundance in abundances.items():
 
-        if k in allele_proportions:
+        if allele in neighbours:
 
-            count = allele_proportions[k]
+            count = allele_counts[allele]
 
-            combined_probs[k] = neighbour.similarity * (1 - (abund ** count))
+            combined_probs[allele] = similarity * (1 - (abundance ** count))
 
         else:
 
-            combined_probs[k] = (1 - neighbour.similarity) * abund
+            combined_probs[allele] = (1 - similarity) * abundance
 
     return combined_probs
 
 
-def bayes(adj_abundances, neighbour_probs, flanks) -> Dict[int, float]:
+def closest_relative_alleles(strain_profile: pd.Series, gene: str,
+                             model_path: Path,
+                             abundances: AlleleProb) -> AlleleProb:
+
+    calls = pd.read_csv(model_path / 'calls.csv', index_col=0)
+
+    neighbour_alleles = nearest_neighbour(strain_profile, gene, calls)
+
+    return neighbour_allele_probabilities(neighbour_alleles, abundances)
+
+def flank_linkage(strain_profile: pd.Series, gene: str, model_path: Path,
+                  abundances: Dict) -> AlleleProb:
+
+    calls_path = model_path / 'calls.csv'
+    calls = pd.read_csv(calls_path, index_col=0)
+
+    triplet_path = model_path / 'triplets.json'
+    with triplet_path.open('r') as f:
+        data = json.load(f)
+
+    best_predictor_gene = data[gene]['best'][0]  # index access is temp hack
+    second_predictor_gene = data[gene]['second'][0]
+
+    best_calls = calls[best_predictor_gene]
+    second_calls = calls[second_predictor_gene]
+    query_calls = calls[gene]
+
+    possible = np.array(list(abundances.keys()))
+
+    strain_best_predictor = int(strain_profile[best_predictor_gene])
+    strain_second_predictor = int(strain_profile[second_predictor_gene])
+
+    predictions = (best_calls == strain_best_predictor)     & \
+                  (second_calls == strain_second_predictor) & \
+                  (np.isin(query_calls, possible))
+
+    triplet_probabilities = {}
+
+    for hypothesis in possible:
+
+        if hypothesis not in query_calls:
+            # If hypothesis is *never* observed with these predictors,
+            # it's not impossible - merely unlikely.
+            #
+            # Use the probability of an unobserved allele
+            # as the base probability.
+
+            triplet_probabilities[hypothesis] = abundances['?']
+
+        else:
+
+            is_h = (calls[gene] == hypothesis)
+
+            predictors_given_h = (has_predictors & is_h).sum() / is_h.sum()
+
+            triplet_probabilities[hypothesis] = predictors_given_h
+
+    return triplet_probabilities
+
+
+def partial_sequence_match(gene: str, model_path: Path, jsonpath: Path) -> Set[str]:
+    """Attempts to use partial sequence data to exclude possible alleles."""
+
+    genes = model_path / 'alleles'
+
+    with jsonpath.open('r') as json_obj:
+        data = json.load(json_obj)
+
+    fragment = data[gene]['SubjAln']
+
+    fragment_pattern = re.compile('(^{seq})|({seq}$)'.format(seq=fragment))
+
+    glob_pattern = '*{}.f*'.format(gene)
+    gene_file, *_ = genes.glob(glob_pattern)
+
+    with gene_file.open('r') as fasta:
+
+        matches = set(rec.id for rec in SeqIO.parse(fasta, 'fasta')
+                      if re.search(fragment_pattern, str(rec.seq)))
+
+    return matches
+
+
+def allele_abundances(gene: str, partial_matches: Set[str],
+                      model_path: Path) -> AlleleProb:
+    """Calculates the abundances of alleles for a given gene and attempts to
+    determine the probability that the next observation will be a new allele.
+    """
+
+    abundance_path = model_path / 'abundances.json'
+
+    with abundance_path.open('r') as f:
+        data = json.load(f)
+
+    model_abundances = data[gene]
+
+    possible_abundance = {allele: count
+                          for allele, count in model_abundances.items()
+                          if allele in partial_matches or allele == '?'}
+
+    total_observations = sum(possible_abundance.values())
+
+    abundance = {allele: count / total_observations
+                 for allele, count in possible_abundance.items()}
+
+    return abundance
+
+
+def bayes(abundances: AlleleProb, triplets: AlleleProb,
+          neighbours: AlleleProb) -> AlleleProb:
 
     def bayes_theorem(h: Union[str, int]) -> float:
         """Implementation of Bayes' Theorem in which the hypothesis being
@@ -402,131 +242,86 @@ def bayes(adj_abundances, neighbour_probs, flanks) -> Dict[int, float]:
         in question to its nearest neighbour.
         """
 
-        neighbour_probability = neighbour_probs[h]
+        neighbour_probability = neighbours[h]
 
-        flanks_given_h = flanks[h]
+        triplet_probability = triplets[h]
 
-        e_h = flanks_given_h * neighbour_probability
+        e_h = triplet_probability * neighbour_probability
 
         return e_h
 
-    likelihoods = {h: bayes_theorem(h) for h in adj_abundances}
+    likelihoods = {h: bayes_theorem(h) for h in abundances}
 
     e = sum(likelihoods.values())
 
-    return {h: ((likelihoods[h] * adj_abundances[h]) / e)
-            for h in adj_abundances}
+    return {h: ((likelihoods[h] * abundances[h]) / e) for h in abundances}
 
 
-def recover_allele(strain: str, gene: str, calls: pd.DataFrame,
-                   distances: np.matrix, genes: Path, jsondir: Path,
-                   gene_abundances):
-    """Attempts to recover the allele of a missing locus based on
-    lines of evidence from allele abundance, linkage disequilibrium, the
-    close relatives.
+def load_genome(genome_calls_path: Path):
 
-    If the locus is truncated, fragment matching can be used to eliminate
-    possible alleles. If the gene is wholly missing, then all alleles are in
-    contention.
-    """
+    # Load from fsac JSON
+    with genome_calls_path.open('r') as f:
+        data = json.load(f)
 
-    if calls.loc[strain, gene] == -1:  # is truncation
+    genome_calls = {}
+    for gene in data:
 
-        fragment_matches = partial_sequence_match(strain, gene, genes, jsondir)
+        if data[gene]['BlastResult'] is False:
+            genome_calls[gene] = '0'
 
-    else:  # is wholly missing
+        elif data[gene]['IsContigTruncation']:
+            genome_calls[gene] = '-1'
 
-        fragment_matches = set(calls[gene]) - {0, -1}
+        else:
+            genome_calls[gene] = data[gene]['MarkerMatch']
 
-    adj_abundances = redistribute_allele_probability(gene_abundances[gene],
-                                                     fragment_matches)
-
-    neighbour = nearest_neighbour(gene, strain,  # fragment_matches,
-                                  distances, calls)
-
-    neighbour_probs = neighbour_similarities(neighbour, adj_abundances)
-
-    flanks = {h: flank_linkage(strain, gene, h, gene_abundances, calls)
-              for h in adj_abundances}
-
-    probabilities = bayes(adj_abundances, neighbour_probs, flanks)
-
-    return probabilities
+    return pd.Series(genome_calls, name=genome_calls_path.stem, dtype=int)
 
 
-def recover(callspath: Path, reference: Path, genes: Path, jsondir: Path,
-            distance_path: Optional[Path], replicates: int, seed: int,
-            cores: int):
-    """Master function for crowBAR.
-
-    Walks through a pandas DataFrame of allele calls and attempts to recover
-    any truncated (-1) or absent (0) loci.
-    """
-
-    results = {}  # Dict[str, Dict[str, Dict[int, float]
-
-    calls = order_on_reference(reference, genes,
-                               pd.read_csv(callspath, index_col=0), cores)
-
-    distances = hamming_distance_matrix(distance_path, calls, cores)
-
-    gene_abundances = gene_allele_abundances(calls, replicates, seed, cores)
-
-    total_bad = sum((calls < 1).sum())
-
-    counter = 0
-
-    for strain in calls.index:
-
-        for gene in calls.columns:
-
-            if calls.loc[strain, gene] < 1:  # truncated or missing
-
-                probs = recover_allele(strain, gene, calls, distances,
-                                       genes, jsondir, gene_abundances)
-
-                try:
-                    results[strain][gene] = probs
-
-                except KeyError:
-
-                    results[strain] = {}
-                    results[strain][gene] = probs
-
-                counter += 1
-
-                user_msg(counter, '/', total_bad)
-
-    return results
+def recover(strain_profile: pd.Series, json_path,
+            model_path: Path) -> Tuple[pd.Series, Dict[str, AlleleProb]]:
 
 
-def write_output(results, outpath: Path) -> None:
+    repaired_calls = strain_profile.copy()
 
-    reformatted_results = {}
+    all_gene_probabilities = {}
 
-    for strain in results:
-        reformatted_results[strain] = {}
+    missing = strain_profile.isin(pd.Series(['0', '-1'])) #< 1
 
-        for gene in results[strain]:
-            reformatted_results[strain][gene] = {}
+    missing_genes = strain_profile[missing].index
 
-            for allele in results[strain][gene]:
+    for gene in missing_genes:
 
-                allele_ = str(allele)  # JSON keys are converted to str anyway
+        partial_matches = partial_sequence_match(gene, model_path, json_path)
 
-                prob = results[strain][gene][allele]
-                probability = -1 if np.isnan(prob) else float(prob)
+        abundances = allele_abundances(gene, partial_matches, model_path)
 
-                reformatted_results[strain][gene][allele_] = probability
+        triplets = flank_linkage(strain_profile, gene, model_path, abundances)
 
-    if outpath is None:
+        neighbours = closest_relative_alleles(strain_profile, gene,
+                                              model_path, abundances)
 
-        json.dump(reformatted_results, sys.stdout, indent=4)
+        probabilities = bayes(abundances, triplets, neighbours)
 
-    else:
+        most_probable = max(probabilities, key=lambda x: probabilities[x])
 
-        with outpath.open('w') as out:
-            json.dump(reformatted_results, out, indent=4)
+        repaired_calls[gene] = most_probable
+
+        all_gene_probabilities[gene] = probabilities
+
+    return repaired_calls, all_gene_probabilities
+
+
+def write_results(repaired_calls: pd.Series,
+                  all_gene_probabilities: Dict[str, AlleleProb],
+                  outdir: Path) -> None:
+
+    output_name = outdir / repaired_calls.name
+
+    pd.DataFrame(repaired_calls).T.to_csv(output_name.with_suffix('.csv'))
+
+    with output_name.with_suffix('.json').open('w') as f:
+        json.dump(all_gene_probabilities, f)
 
 
 def main():
@@ -534,10 +329,11 @@ def main():
 
     args = arguments()
 
-    results = recover(args.calls, args.reference, args.genes, args.jsons,
-                      args.distances, args.replicates, args.seed, args.cores)
+    strain_profile = load_genome(args.input)
 
-    write_output(results, args.output)
+    repaired, probabilities =  recover(strain_profile, args.input, args.model)
+
+    write_results(repaired, probabilities, args.output)
 
 
 if __name__ == '__main__':
