@@ -272,7 +272,7 @@ def gather_evidence(strain_profile: pd.Series, json_path: Path,
 
     missing = strain_profile.isin(pd.Series(['0', '-1'])) #< 1
 
-    missing_genes = strain_profile[missing]
+    missing_genes = strain_profile[missing].index
 
     for gene in missing_genes:
 
