@@ -217,6 +217,8 @@ def compare_to_known(strain_profiles: Dict[str, pd.Series],
     # Compare maximum probabiltiy from JSON to known result
     # {gene: {allele: probability}}
 
+    error_types = ('missing', 'truncation')
+
     results = []
 
     simulated_jsons = paths['recovered'].glob('*.json')
@@ -226,8 +228,6 @@ def compare_to_known(strain_profiles: Dict[str, pd.Series],
         known_json = paths['test'] / simulated_json.name
 
         strain = simulated_json.stem
-
-        strain_evidence = evidence[strain]
 
         with simulated_json.open('r') as s, known_json.open('r') as k:
 
@@ -254,20 +254,25 @@ def compare_to_known(strain_profiles: Dict[str, pd.Series],
 
                 second_allele = likeliest_allele
 
+            gene_evidence = evidence[strain][gene]
+
             actual_allele = known[gene]['MarkerMatch']
+
+            error_code = strain_profiles[strain][gene]
+            error_type = error_types[error_code]
 
             result = {'strain': strain,
                       'gene': gene,
                       'actual': actual_allele,
-                      'error_type': strain_profiles[strain][gene],
+                      'error_type': error_type,
                       'correct': likeliest_allele == actual_allele,
                       'most_likely': likeliest_allele,
                       'most_likely_prob': alleles[likeliest_allele],
                       'second_allele': second_allele,
                       'second_prob': alleles[second_allele],
-                      'abundance': strain_evidence[gene]['abundances'],
-                      'triplets': strain_evidence[gene]['triplets'],
-                      'neighbours': strain_evidence[gene]['neighbours']
+                      'abundance': gene_evidence['abundances'][likeliest_allele],
+                      'triplets': gene_evidence['triplets'][likeliest_allele],
+                      'neighbours': gene_evidence['neighbours'][likeliest_allele]
                       }
 
             results.append(pd.Series(result))
@@ -277,7 +282,7 @@ def compare_to_known(strain_profiles: Dict[str, pd.Series],
 
 def summarize_results(results: SimulationResults, paths: PathTable):
 
-    df_results = pd.DataFrame(results).T
+    df_results = pd.DataFrame(results)
 
     df_results.to_csv(paths['report'], sep='\t', index=False)
 
