@@ -1,36 +1,17 @@
 import argparse
+import collections
 import itertools
 import json
 import re
-import math
-import operator
-import subprocess
-import sys
-import warnings
-from collections import Counter, namedtuple
-from concurrent.futures import ProcessPoolExecutor
-from functools import partial
-from io import StringIO
 from pathlib import Path
-from statistics import mean
-from typing import Dict, List, Optional, Set, Tuple, Union
+from typing import Dict, List, Set, Tuple, Union
 
 # Third-party imports
 import pandas as pd
 import numpy as np
 from Bio import SeqIO
 
-# Local imports
-from shared import user_msg, logtime, hamming_distance_matrix
-
 # Complex type constants
-TRIPLET_COUNTS = Dict[int, Dict[int, Dict[int, int]]]
-TRIPLET_PROBS = Dict[int, Dict[int, Dict[int, float]]]
-NUMERIC = Union[int, float]
-ABUNDANCE = Dict[Union[str, int], float]
-
-Neighbour = namedtuple('Neighbour', ('indices', 'alleles', 'similarity'))
-
 NeighbourAlleles = List[Tuple[str, float]]
 AlleleProb = Dict[str, float]
 
@@ -105,7 +86,7 @@ def neighbour_allele_probabilities(neighbouring_alleles: NeighbourAlleles,
     neighbours, similarities = zip(*neighbouring_alleles)
     similarity, *_ = similarities
 
-    allele_counts = Counter(neighbours)
+    allele_counts = collections.Counter(neighbours)
 
     combined_probs = {}
 
@@ -134,6 +115,7 @@ def closest_relative_alleles(strain_profile: pd.Series, gene: str,
 
     return neighbour_allele_probabilities(neighbour_alleles, abundances)
 
+
 def flank_linkage(strain_profile: pd.Series, gene: str, model_path: Path,
                   abundances: Dict) -> AlleleProb:
 
@@ -144,27 +126,17 @@ def flank_linkage(strain_profile: pd.Series, gene: str, model_path: Path,
     with triplet_path.open('r') as f:
         data = json.load(f)
 
-    best_predictor_gene = data[gene]['best'][0]  # index access is temp hack
-    second_predictor_gene = data[gene]['second'][0]
-
-    best_calls = calls[best_predictor_gene]
-    second_calls = calls[second_predictor_gene]
-    query_calls = calls[gene]
-
     possible = np.array(list(abundances.keys()))
-
-    strain_best_predictor = int(strain_profile[best_predictor_gene])
-    strain_second_predictor = int(strain_profile[second_predictor_gene])
-
-    predictions = (best_calls == strain_best_predictor)     & \
-                  (second_calls == strain_second_predictor) & \
-                  (np.isin(query_calls, possible))
 
     triplet_probabilities = {}
 
+    query_calls = calls[gene]
+
+    query_calls_set = set(query_calls)
+
     for hypothesis in possible:
 
-        if hypothesis not in query_calls:
+        if hypothesis not in query_calls_set:
             # If hypothesis is *never* observed with these predictors,
             # it's not impossible - merely unlikely.
             #
@@ -176,6 +148,21 @@ def flank_linkage(strain_profile: pd.Series, gene: str, model_path: Path,
         else:
 
             is_h = (calls[gene] == hypothesis)
+
+            # index access is temp hack
+            best_predictor_gene = data[gene]['best'][0]
+            second_predictor_gene = data[gene]['second'][0]
+
+            best_calls = calls[best_predictor_gene]
+            second_calls = calls[second_predictor_gene]
+
+
+            strain_best_predictor = int(strain_profile[best_predictor_gene])
+            strain_second_predictor = int(strain_profile[second_predictor_gene])
+
+            has_predictors = (best_calls == strain_best_predictor)     & \
+                             (second_calls == strain_second_predictor) & \
+                             (np.isin(query_calls, possible))
 
             predictors_given_h = (has_predictors & is_h).sum() / is_h.sum()
 
@@ -278,30 +265,48 @@ def load_genome(genome_calls_path: Path):
     return pd.Series(genome_calls, name=genome_calls_path.stem, dtype=int)
 
 
-def recover(strain_profile: pd.Series, json_path,
-            model_path: Path) -> Tuple[pd.Series, Dict[str, AlleleProb]]:
+def gather_evidence(strain_profile: pd.Series, json_path: Path,
+                    model: Path) -> Dict[str, AlleleProb]:
+
+    evidence = {}
+
+    missing = strain_profile.isin(pd.Series(['0', '-1'])) #< 1
+
+    missing_genes = strain_profile[missing]
+
+    for gene in missing_genes:
+
+        partial_matches = partial_sequence_match(gene, model, json_path)
+
+        abundances = allele_abundances(gene, partial_matches, model)
+
+        triplets = flank_linkage(strain_profile, gene, model, abundances)
+
+        neighbours = closest_relative_alleles(strain_profile, gene,
+                                              model, abundances)
+
+        evidence[gene] = {
+            'abundances': abundances,
+            'triplets':   triplets,
+            'neighbours': neighbours
+        }
+
+    return evidence
+
+
+def recover(strain_profile: pd.Series,
+            evidence: Dict[str, AlleleProb]) -> Tuple[pd.Series, Dict[str, AlleleProb]]:
 
 
     repaired_calls = strain_profile.copy()
 
     all_gene_probabilities = {}
 
-    missing = strain_profile.isin(pd.Series(['0', '-1'])) #< 1
+    for gene in evidence:
 
-    missing_genes = strain_profile[missing].index
-
-    for gene in missing_genes:
-
-        partial_matches = partial_sequence_match(gene, model_path, json_path)
-
-        abundances = allele_abundances(gene, partial_matches, model_path)
-
-        triplets = flank_linkage(strain_profile, gene, model_path, abundances)
-
-        neighbours = closest_relative_alleles(strain_profile, gene,
-                                              model_path, abundances)
-
-        probabilities = bayes(abundances, triplets, neighbours)
+        probabilities = bayes(evidence['abundances'],
+                              evidence['triplets'],
+                              evidence['neighbours'])
 
         most_probable = max(probabilities, key=lambda x: probabilities[x])
 
@@ -331,7 +336,9 @@ def main():
 
     strain_profile = load_genome(args.input)
 
-    repaired, probabilities =  recover(strain_profile, args.input, args.model)
+    evidence = gather_evidence(strain_profile, args.input, args.model)
+
+    repaired, probabilities = recover(strain_profile, evidence)
 
     write_results(repaired, probabilities, args.output)
 
