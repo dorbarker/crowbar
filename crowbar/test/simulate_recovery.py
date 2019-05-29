@@ -6,7 +6,7 @@ import random
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from functools import partial
-from typing import Dict, Tuple, Union
+from typing import Dict, List, Tuple
 import pandas as pd
 
 up = os.path.abspath(os.path.join(os.path.dirname(__file__), os.path.pardir))
@@ -16,7 +16,8 @@ import crowbar  # main script
 
 # Complex types
 Truncations = Dict[str, str]
-SimulationResults = Dict[str, Dict[str, Union[str, float]]]
+#SimulationResults = Dict[str, Dict[str, Union[str, float]]]
+SimulationResults = List[pd.Series]
 PathTable = Dict[str, Path]
 
 import numpy as np
@@ -172,17 +173,20 @@ def _simulate_recovery(genome_path: Path, trunc_prob: float, miss_prob: float,
 
     sim_json_path = create_dummy_jsons(strain_name, truncations, paths)
 
-    repaired_calls, probabilities = crowbar.recover(modified_profile,
-                                                    sim_json_path,
-                                                    paths['model'])
+    evidence = crowbar.gather_evidence(modified_profile,
+                                       sim_json_path,
+                                       paths['model'])
+
+    repaired_calls, probabilities = crowbar.recover(modified_profile, evidence)
 
     crowbar.write_results(repaired_calls, probabilities, paths['recovered'])
 
-    return strain_name, modified_profile
+    return strain_name, modified_profile, evidence
 
 
 def simulate_recovery(trunc_prob: float, miss_prob: float, paths: PathTable,
-                      cores: int) -> Dict[str, pd.Series]:
+                      cores: int) -> Tuple[Dict[str, crowbar.AlleleProb],
+                              Dict[str, pd.Series]]:
 
 
     jsons = paths['test'].glob('*.json')
@@ -196,17 +200,24 @@ def simulate_recovery(trunc_prob: float, miss_prob: float, paths: PathTable,
 
         profiles = ppe.map(sim_recov, jsons)
 
-    strain_profiles = dict(profiles)
+    strain_profiles = {}
+    strain_evidence = {}
 
-    return strain_profiles
+    for strain_name, modified_profile, evidence in profiles:
+
+        strain_profiles[strain_name] = modified_profile
+        strain_evidence[strain_name] = evidence
+
+    return strain_profiles, strain_evidence
 
 
 def compare_to_known(strain_profiles: Dict[str, pd.Series],
+                     evidence: Dict[str, crowbar.AlleleProb],
                      paths: PathTable) -> SimulationResults:
     # Compare maximum probabiltiy from JSON to known result
     # {gene: {allele: probability}}
 
-    results = {}
+    results = []
 
     simulated_jsons = paths['recovered'].glob('*.json')
 
@@ -215,6 +226,8 @@ def compare_to_known(strain_profiles: Dict[str, pd.Series],
         known_json = paths['test'] / simulated_json.name
 
         strain = simulated_json.stem
+
+        strain_evidence = evidence[strain]
 
         with simulated_json.open('r') as s, known_json.open('r') as k:
 
@@ -243,13 +256,21 @@ def compare_to_known(strain_profiles: Dict[str, pd.Series],
 
             actual_allele = known[gene]['MarkerMatch']
 
-            results[gene] = {'actual': actual_allele,
-                             'error_type': strain_profiles[strain][gene],
-                             'correct': likeliest_allele == actual_allele,
-                             'most_likely': likeliest_allele,
-                             'most_likely_prob': alleles[likeliest_allele],
-                             'second_allele': second_allele,
-                             'second_prob': alleles[second_allele]}
+            result = {'strain': strain,
+                      'gene': gene,
+                      'actual': actual_allele,
+                      'error_type': strain_profiles[strain][gene],
+                      'correct': likeliest_allele == actual_allele,
+                      'most_likely': likeliest_allele,
+                      'most_likely_prob': alleles[likeliest_allele],
+                      'second_allele': second_allele,
+                      'second_prob': alleles[second_allele],
+                      'abundance': strain_evidence[gene]['abundances'],
+                      'triplets': strain_evidence[gene]['triplets'],
+                      'neighbours': strain_evidence[gene]['neighbours']
+                      }
+
+            results.append(pd.Series(result))
 
     return results
 
@@ -291,10 +312,12 @@ def main():
 
     paths = create_path_table(args.outdir, args.test_jsons, args.model)
 
-    modified_profiles = simulate_recovery(args.trunc_prob, args.miss_prob,
-                                          paths, args.cores)
+    modified_profiles, evidence = simulate_recovery(args.trunc_prob,
+                                                    args.miss_prob,
+                                                    paths,
+                                                    args.cores)
 
-    results = compare_to_known(modified_profiles, paths)
+    results = compare_to_known(modified_profiles, evidence, paths)
 
     summarize_results(results, paths)
 
