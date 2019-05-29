@@ -304,9 +304,9 @@ def recover(strain_profile: pd.Series,
 
     for gene in evidence:
 
-        probabilities = bayes(evidence['abundances'],
-                              evidence['triplets'],
-                              evidence['neighbours'])
+        probabilities = bayes(evidence[gene]['abundances'],
+                              evidence[gene]['triplets'],
+                              evidence[gene]['neighbours'])
 
         most_probable = max(probabilities, key=lambda x: probabilities[x])
 
