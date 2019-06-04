@@ -9,45 +9,9 @@ from pathlib import Path
 from typing import Dict, Tuple
 import pandas as pd
 
-import wallace
+from . import wallace
 Abundance = Dict[str, Dict[str, int]]
 Triplets = Dict[str, Dict[str, Tuple[str, float]]]
-
-
-def arguments():
-
-    parser = argparse.ArgumentParser()
-
-    parser.add_argument('--calls',
-                        type=Path,
-                        required=True,
-                        help='Path to allele calls table')
-
-    parser.add_argument('--alleles-dir',
-                        type=Path,
-                        required=True,
-                        help='Path to directory containing gene FASTAs')
-
-    parser.add_argument('--output',
-                        type=Path,
-                        required=True,
-                        help='Directory containing model')
-
-    parser.add_argument('--cores',
-                        type=int,
-                        default=1,
-                        help='Number of CPU cores to use [1]')
-
-    return parser.parse_args()
-
-
-def main():
-
-    args = arguments()
-
-    calls = load_calls(args.calls)
-
-    build_model(calls, args.alleles_dir, args.output, args.cores)
 
 
 def build_model(calls: pd.DataFrame, alleles_dir: Path,
@@ -173,6 +137,3 @@ def write_json(values: Dict, name: str, model_path: Path) -> None:
     with output_path.open('w') as f:
         json.dump(values, f, indent=4)
 
-
-if __name__ == '__main__':
-    main()
