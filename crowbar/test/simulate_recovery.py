@@ -12,7 +12,7 @@ import pandas as pd
 up = os.path.abspath(os.path.join(os.path.dirname(__file__), os.path.pardir))
 sys.path.append(up)
 
-import crowbar  # main script
+import recover # main script
 
 # Complex types
 Truncations = Dict[str, str]
@@ -166,26 +166,26 @@ def _simulate_recovery(genome_path: Path, trunc_prob: float, miss_prob: float,
 
     strain_name = genome_path.stem
 
-    strain_profile = crowbar.load_genome(genome_path)
+    strain_profile = recover.load_genome(genome_path)
 
     modified_profile, truncations = modify_row(strain_profile, trunc_prob,
                                                miss_prob, paths)
 
     sim_json_path = create_dummy_jsons(strain_name, truncations, paths)
 
-    evidence = crowbar.gather_evidence(modified_profile,
+    evidence = recover.gather_evidence(modified_profile,
                                        sim_json_path,
                                        paths['model'])
 
-    repaired_calls, probabilities = crowbar.recover(modified_profile, evidence)
+    repaired_calls, probabilities = recover.recover(modified_profile, evidence)
 
-    crowbar.write_results(repaired_calls, probabilities, paths['recovered'])
+    recover.write_results(repaired_calls, probabilities, paths['recovered'])
 
     return strain_name, modified_profile, evidence
 
 
 def simulate_recovery(trunc_prob: float, miss_prob: float, paths: PathTable,
-                      cores: int) -> Tuple[Dict[str, crowbar.AlleleProb],
+                      cores: int) -> Tuple[Dict[str, recover.AlleleProb],
                               Dict[str, pd.Series]]:
 
 
@@ -212,7 +212,7 @@ def simulate_recovery(trunc_prob: float, miss_prob: float, paths: PathTable,
 
 
 def compare_to_known(strain_profiles: Dict[str, pd.Series],
-                     evidence: Dict[str, crowbar.AlleleProb],
+                     evidence: Dict[str, recover.AlleleProb],
                      paths: PathTable) -> SimulationResults:
     # Compare maximum probabiltiy from JSON to known result
     # {gene: {allele: probability}}
