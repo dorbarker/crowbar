@@ -1,4 +1,3 @@
-import argparse
 import collections
 import itertools
 import json
@@ -14,28 +13,6 @@ from Bio import SeqIO
 # Complex type constants
 NeighbourAlleles = List[Tuple[str, float]]
 AlleleProb = Dict[str, float]
-
-def arguments():
-    """Gather command line arguments for crowbar.py"""
-
-    parser = argparse.ArgumentParser()
-
-    parser.add_argument('-i', '--input',
-                        type=Path,
-                        required=True,
-                        help='Path to input fsac-formatted JSON')
-
-    parser.add_argument('-o', '--output',
-                        type=Path,
-                        required=True,
-                        help='Path to output directory')
-
-    parser.add_argument('--model',
-                        type=Path,
-                        required=True,
-                        help='Path to recovery model')
-
-    return parser.parse_args()
 
 
 def nearest_neighbour(strain_profile: pd.Series, gene: str,
@@ -329,19 +306,13 @@ def write_results(repaired_calls: pd.Series,
         json.dump(all_gene_probabilities, f)
 
 
-def main():
+def recover_genome(infile: Path, model: Path, output: Path):
     """Main function. Gathers arguments and passes them to recover()"""
 
-    args = arguments()
+    strain_profile = load_genome(infile)
 
-    strain_profile = load_genome(args.input)
-
-    evidence = gather_evidence(strain_profile, args.input, args.model)
+    evidence = gather_evidence(strain_profile, infile, model)
 
     repaired, probabilities = recover(strain_profile, evidence)
 
-    write_results(repaired, probabilities, args.output)
-
-
-if __name__ == '__main__':
-    main()
+    write_results(repaired, probabilities, output)

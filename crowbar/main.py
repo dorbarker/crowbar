@@ -1,7 +1,10 @@
 import argparse
 import sys
+from pathlib import Path
 
 from . import __version__
+from .recover import recover_genome
+from .model import load_calls, build_model
 
 def arguments():
 
@@ -75,19 +78,24 @@ def arguments():
     return args
 
 
+def recover_alleles(args):
+
+    recover_genome(args.input, args.model, args.output)
+
+
+def train_model(args):
+
+    calls = load_calls(args.calls)
+
+    build_model(calls, args.alleles_dir, args.output, args.cores)
+
+
 def main():
 
     args = arguments()
 
     args.func(args)
 
-
-def recover_alleles():
-    ...
-
-
-def train_model():
-    ...
 
 if __name__ == '__main__':
     main()
