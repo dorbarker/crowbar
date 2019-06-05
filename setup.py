@@ -14,7 +14,8 @@ setup(
 
     entry_points={
         'console_scripts': [
-            'crowbar=crowbar.main:main'
+            'crowbar=crowbar.main:main',
+            'crowbar-simulate=crowbar.test.simulate_recovery:main'
         ]
     }
 )
