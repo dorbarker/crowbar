@@ -7,7 +7,8 @@ setup(
     packages=find_packages(),
     install_requires=[
         'pandas>=0.22.0',
-        'numpy>=1.16.3'
+        'numpy>=1.16.3',
+        'biopython>=1.73'
         ],
     author='Dillon Barker',
     author_email='dillon.barker@canada.ca',
