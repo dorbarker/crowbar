@@ -23,49 +23,6 @@ PathTable = Dict[str, Path]
 import numpy as np
 np.seterr(all='raise')
 
-def arguments():
-
-
-    parser = argparse.ArgumentParser()
-
-    parser.add_argument('--truncation-probability',
-                        type=float,
-                        default=0.0,
-                        dest='trunc_prob',
-                        help='Uniform probability that any given \
-                              locus will be truncated [0.0]')
-
-    parser.add_argument('--missing-probability',
-                        type=float,
-                        default=0.0,
-                        dest='miss_prob',
-                        help='Uniform probability that any given \
-                              locus will be rendered missing [0.0]')
-
-    parser.add_argument('--test-jsons',
-                        type=Path,
-                        required=True,
-                        help='Directory containing FSAC-format JSONs')
-
-    parser.add_argument('--outdir',
-                        type=Path,
-                        required=True,
-                        help='Output path')
-
-    parser.add_argument('--model',
-                        type=Path,
-                        required=True,
-                        help='Path to pre-trained model')
-
-    parser.add_argument('-j', '--cores',
-                        type=int,
-                        default=1,
-                        help='Number of CPU cores to use [1]')
-
-    args = parser.parse_args()
-
-    return args
-
 
 def modify_row(strain_profile: pd.Series, trunc_prob: float, miss_prob: float,
                paths: PathTable) -> Tuple[pd.Series, Truncations]:
@@ -311,9 +268,7 @@ def create_path_table(parent: Path, test_jsons: Path, model: Path) -> PathTable:
     return paths
 
 
-def main():
-
-    args = arguments()
+def simulate_recovery(args):
 
     paths = create_path_table(args.outdir, args.test_jsons, args.model)
 
@@ -326,6 +281,3 @@ def main():
 
     summarize_results(results, paths)
 
-
-if __name__ == '__main__':
-    main()
