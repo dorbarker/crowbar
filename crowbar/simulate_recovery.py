@@ -9,19 +9,13 @@ from functools import partial
 from typing import Dict, List, Tuple
 import pandas as pd
 
-up = os.path.abspath(os.path.join(os.path.dirname(__file__), os.path.pardir))
-sys.path.append(up)
-
-import recover # main script
+from . import recover # main script
 
 # Complex types
 Truncations = Dict[str, str]
 #SimulationResults = Dict[str, Dict[str, Union[str, float]]]
 SimulationResults = List[pd.Series]
 PathTable = Dict[str, Path]
-
-import numpy as np
-np.seterr(all='raise')
 
 
 def modify_row(strain_profile: pd.Series, trunc_prob: float, miss_prob: float,

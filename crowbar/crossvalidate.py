@@ -6,11 +6,15 @@ from typing import Optional
 
 from simulate_recovery import PathTable
 
+import model
+
+print(model.build_model)
+
 def crossvalidate():
     pass
 
 
-def divide_jsons(n: int, paths: PathTable, seed: Optional[int] = None):
+def divide_jsons(n: int, paths: PathTable, seed: Optional[int] = None) -> None:
 
     random.seed(seed)
 
@@ -51,9 +55,10 @@ def divide_jsons(n: int, paths: PathTable, seed: Optional[int] = None):
             out_json.symlink_to(j.resolve())
 
 
+def generate_models(paths: PathTable):
 
-def design_experiments():
-    pass
+    for experiment in paths['experiments'].glob('*/'):
+        pass
 
 
 def run_experiments():

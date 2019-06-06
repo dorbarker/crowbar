@@ -2,7 +2,7 @@ import argparse
 import sys
 from pathlib import Path
 
-import simulate_recovery
+from .simulate_recovery import simulate_recovery
 
 def arguments():
 
@@ -96,7 +96,7 @@ def arguments():
 
 def single_simulation(args):
 
-    simulate_recovery.simulate_recovery(args)
+    simulate_recovery(args)
 
 
 def crossval(args):
