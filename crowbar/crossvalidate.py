@@ -4,11 +4,9 @@ import random
 from pathlib import Path
 from typing import Optional
 
-from simulate_recovery import PathTable
+from .simulate_recovery import PathTable
 
-import model
-
-print(model.build_model)
+from . import model
 
 def crossvalidate():
     pass

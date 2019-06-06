@@ -3,6 +3,8 @@ import sys
 from pathlib import Path
 
 from .simulate_recovery import simulate_recovery
+from .crossvalidate import crossvalidate
+
 
 def arguments():
 
