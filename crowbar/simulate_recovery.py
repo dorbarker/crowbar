@@ -262,14 +262,15 @@ def create_path_table(parent: Path, test_jsons: Path, model: Path) -> PathTable:
     return paths
 
 
-def simulate_recovery(args):
+def simulate_recovery(outdir: Path, test_jsons: Path, model: Path,
+                      trunc_prob: float, miss_prob: float, cores: int):
 
-    paths = create_path_table(args.outdir, args.test_jsons, args.model)
+    paths = create_path_table(outdir, test_jsons, model)
 
-    modified_profiles, evidence = simulate_recovery(args.trunc_prob,
-                                                    args.miss_prob,
+    modified_profiles, evidence = simulate_recovery(trunc_prob,
+                                                    miss_prob,
                                                     paths,
-                                                    args.cores)
+                                                    cores)
 
     results = compare_to_known(modified_profiles, evidence, paths)
 

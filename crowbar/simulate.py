@@ -64,6 +64,19 @@ def arguments():
 
     xval.set_defaults(func=crossval)
 
+    xval.add_argument('-n',
+                      type=int,
+                      required=True,
+                      help='''The number of equally-sized subsamples into
+                              which the population will be divided. For n
+                              subsamples, n-1 will be used as training data.
+                              ''')
+    xval.add_argument('--seed',
+                      type=int,
+                      required=False,
+                      default=None,
+                      help='Seed to initialize the PRNG')
+
     xval.add_argument('--truncation-probability',
                       type=float,
                       default=0.0,
@@ -98,7 +111,8 @@ def arguments():
 
 def single_simulation(args):
 
-    simulate_recovery(args)
+    simulate_recovery(args.outdir, args.test_jsons, args.model,
+                      args.trunc_prob, args.miss_prob, args.cores)
 
 
 def crossval(args):
