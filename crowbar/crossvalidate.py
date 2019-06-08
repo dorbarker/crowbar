@@ -39,6 +39,17 @@ def generate_paths_table(experiments: Path, jsons: Path,
 
 
 def divide_jsons(n: int, paths: PathTable, seed: Optional[int] = None) -> None:
+    """Divide a pool of FSAC-formatted JSON files into n experimental
+    subsamples. For each experiment, n-1 of the samples are combined into the
+    training data, and the remaining subsample forms the test set. Experiment n
+    uses subsample n as the test set.
+
+    :param n:     The number of experiments and subsamples to be generated
+    :param paths: A dictionary of paths
+    :param seed:  The random seed given to the pseudo-random number generator.
+                  Not setting a value will use the current system time. Setting
+                  a value will make the results reproducible.
+    """
 
     random.seed(seed)
 
@@ -79,7 +90,15 @@ def divide_jsons(n: int, paths: PathTable, seed: Optional[int] = None) -> None:
             out_json.symlink_to(j.resolve())
 
 
-def generate_models(paths: PathTable, cores: int):
+def generate_models(paths: PathTable, cores: int) -> None:
+    """For each experiment, generate a model from the training data.
+
+    This function currently requires FSAC as a dependency. FSAC may be found at
+    https://github.com/dorbarker/fsac
+
+    :param paths: A dictionary of paths
+    :param cores: The number of CPU cores to use for generating each model
+    """
 
     for experiment in paths['experiments'].glob('*/'):
 
@@ -98,7 +117,18 @@ def generate_models(paths: PathTable, cores: int):
         model.build_model(calls, paths['alleles'], experiment / 'model', cores)
 
 
-def run_experiments(paths: PathTable, trunc_prob, miss_prob, cores):
+def run_experiments(paths: PathTable, trunc_prob: float, miss_prob: float,
+                    cores: int) -> None:
+    """Attempt to recovery the synthetic errors introduced into each test set
+    from its corresponding training data.
+
+    :param paths:      A dictionary of paths
+    :param trunc_prob: The probability of any given locus having a synthetic
+                       truncation introduced
+    :param miss_prob:  The probability of any given locus being synthetically
+                       deleted.
+    :param cores: The number of CPU cores to use for generating each model
+    """
 
     for experiment in paths['experiments'].glob('*/'):
 
