@@ -11,10 +11,11 @@ from . import model
 from . import simulate_recovery
 
 
-def crossvalidate(n: int, trunc_prob: float, miss_prob: float, json_dir: Path,
-                  cores, seed: Optional[int] = None):
+def crossvalidate(n: int, trunc_prob: float, miss_prob: float,
+                  experiments: Path, json_dir: Path, alleles: Path, cores: int,
+                  seed: Optional[int] = None):
 
-    paths = generate_paths_table()
+    paths = generate_paths_table(experiments, json_dir, alleles)
 
     divide_jsons(n, paths, seed)
 
@@ -23,8 +24,18 @@ def crossvalidate(n: int, trunc_prob: float, miss_prob: float, json_dir: Path,
     run_experiments(paths, trunc_prob, miss_prob, cores)
 
 
-def generate_paths_table():
-    pass
+def generate_paths_table(experiments: Path, jsons: Path,
+                         alleles: Path) -> PathTable:
+
+    paths = {
+        'experiments': experiments,
+        'alleles':     alleles,
+        'jsons':       jsons
+    }
+
+    paths['experiment'].mkdir(parents=True)
+
+    return paths
 
 
 def divide_jsons(n: int, paths: PathTable, seed: Optional[int] = None) -> None:
