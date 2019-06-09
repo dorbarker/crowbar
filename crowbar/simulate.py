@@ -101,6 +101,16 @@ def arguments():
                       required=True,
                       help='Output directory')
 
+    xval.add_argument('-a', '--alleles',
+                      type=PAth,
+                      required=True,
+                      help='Path to directory containing FASTA-format alleles')
+
+    xval.add_argument('-j', '--cores',
+                      type=int,
+                      required=False,
+                      help='Number of CPU cores to use [1]')
+
     args = parser.parse_args()
     if args.func is None:
         parser.print_help()
@@ -116,8 +126,10 @@ def single_simulation(args):
 
 
 def crossval(args):
-    pass
 
+    crossvalidate.crossvalidate(args.n, args.trunc_prob, args.miss_prob,
+                                args.outdir, args.jsons, args.alleles,
+                                args.cores, args.seed)
 
 def main():
 
