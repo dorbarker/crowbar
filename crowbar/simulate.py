@@ -1,3 +1,8 @@
+"""Simulate allele recovery by adding synthetic errors and comparing the
+subsequent recovery to known values. Recovery may be performed on a single test
+set or via an n-fold crossvalidation.
+"""
+
 import argparse
 import sys
 from pathlib import Path
@@ -7,6 +12,15 @@ from .crossvalidate import crossvalidate
 
 
 def arguments():
+    """Gathers command line arguments for testing allele recovery.
+    Two subparsers are provided:
+
+        'simulate' simulates allele recovery on a single test set by
+        introducing synthetic contig trucations and deleted loci.
+
+        'crossvalidate' is simular to 'simulate', but performs an n-fold
+        crossvalidation on the provided test data.
+    """
 
     parser = argparse.ArgumentParser()
 
@@ -22,38 +36,38 @@ def arguments():
     simulate.set_defaults(func=single_simulation)
 
     simulate.add_argument('--truncation-probability',
-                        type=float,
-                        default=0.0,
-                        dest='trunc_prob',
-                        help='Uniform probability that any given \
-                              locus will be truncated [0.0]')
+                          type=float,
+                          default=0.0,
+                          dest='trunc_prob',
+                          help='Uniform probability that any given \
+                                locus will be truncated [0.0]')
 
     simulate.add_argument('--missing-probability',
-                        type=float,
-                        default=0.0,
-                        dest='miss_prob',
-                        help='Uniform probability that any given \
-                              locus will be rendered missing [0.0]')
+                          type=float,
+                          default=0.0,
+                          dest='miss_prob',
+                          help='Uniform probability that any given \
+                                locus will be rendered missing [0.0]')
 
     simulate.add_argument('--test-jsons',
-                        type=Path,
-                        required=True,
-                        help='Directory containing FSAC-format JSONs')
+                          type=Path,
+                          required=True,
+                          help='Directory containing FSAC-format JSONs')
 
     simulate.add_argument('--outdir',
-                        type=Path,
-                        required=True,
-                        help='Output path')
+                          type=Path,
+                          required=True,
+                          help='Output path')
 
     simulate.add_argument('--model',
-                        type=Path,
-                        required=True,
-                        help='Path to pre-trained model')
+                          type=Path,
+                          required=True,
+                          help='Path to pre-trained model')
 
     simulate.add_argument('-j', '--cores',
-                        type=int,
-                        default=1,
-                        help='Number of CPU cores to use [1]')
+                          type=int,
+                          default=1,
+                          help='Number of CPU cores to use [1]')
 
 
     xval_help = '''Perform a cross-validation by simulating recovery in
@@ -102,7 +116,7 @@ def arguments():
                       help='Output directory')
 
     xval.add_argument('-a', '--alleles',
-                      type=PAth,
+                      type=Path,
                       required=True,
                       help='Path to directory containing FASTA-format alleles')
 
@@ -120,18 +134,26 @@ def arguments():
 
 
 def single_simulation(args):
+    """Simulates recovery on a single pair of training and test sets."""
 
     simulate_recovery(args.outdir, args.test_jsons, args.model,
                       args.trunc_prob, args.miss_prob, args.cores)
 
 
 def crossval(args):
+    """Performs an n-fold crossvalidation by testing n combinations of test and
+    training data.
+    """
 
-    crossvalidate.crossvalidate(args.n, args.trunc_prob, args.miss_prob,
-                                args.outdir, args.jsons, args.alleles,
-                                args.cores, args.seed)
+    crossvalidate(args.n, args.trunc_prob, args.miss_prob,
+                  args.outdir, args.jsons, args.alleles,
+                  args.cores, args.seed)
 
 def main():
+    """Main function. Gathers command line arguments from arguments() and
+    passes them to the function specified by the subparser: simulate or
+    crossvalidate.
+    """
 
     args = arguments()
 
@@ -139,4 +161,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
