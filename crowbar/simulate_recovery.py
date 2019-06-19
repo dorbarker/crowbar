@@ -9,62 +9,13 @@ from functools import partial
 from typing import Dict, List, Tuple
 import pandas as pd
 
-up = os.path.abspath(os.path.join(os.path.dirname(__file__), os.path.pardir))
-sys.path.append(up)
-
-import recover # main script
+from . import recover # main script
 
 # Complex types
 Truncations = Dict[str, str]
 #SimulationResults = Dict[str, Dict[str, Union[str, float]]]
 SimulationResults = List[pd.Series]
 PathTable = Dict[str, Path]
-
-import numpy as np
-np.seterr(all='raise')
-
-def arguments():
-
-
-    parser = argparse.ArgumentParser()
-
-    parser.add_argument('--truncation-probability',
-                        type=float,
-                        default=0.0,
-                        dest='trunc_prob',
-                        help='Uniform probability that any given \
-                              locus will be truncated [0.0]')
-
-    parser.add_argument('--missing-probability',
-                        type=float,
-                        default=0.0,
-                        dest='miss_prob',
-                        help='Uniform probability that any given \
-                              locus will be rendered missing [0.0]')
-
-    parser.add_argument('--test-jsons',
-                        type=Path,
-                        required=True,
-                        help='Directory containing FSAC-format JSONs')
-
-    parser.add_argument('--outdir',
-                        type=Path,
-                        required=True,
-                        help='Output path')
-
-    parser.add_argument('--model',
-                        type=Path,
-                        required=True,
-                        help='Path to pre-trained model')
-
-    parser.add_argument('-j', '--cores',
-                        type=int,
-                        default=1,
-                        help='Number of CPU cores to use [1]')
-
-    args = parser.parse_args()
-
-    return args
 
 
 def modify_row(strain_profile: pd.Series, trunc_prob: float, miss_prob: float,
@@ -311,21 +262,17 @@ def create_path_table(parent: Path, test_jsons: Path, model: Path) -> PathTable:
     return paths
 
 
-def main():
+def simulate_recovery(outdir: Path, test_jsons: Path, model: Path,
+                      trunc_prob: float, miss_prob: float, cores: int):
 
-    args = arguments()
+    paths = create_path_table(outdir, test_jsons, model)
 
-    paths = create_path_table(args.outdir, args.test_jsons, args.model)
-
-    modified_profiles, evidence = simulate_recovery(args.trunc_prob,
-                                                    args.miss_prob,
+    modified_profiles, evidence = simulate_recovery(trunc_prob,
+                                                    miss_prob,
                                                     paths,
-                                                    args.cores)
+                                                    cores)
 
     results = compare_to_known(modified_profiles, evidence, paths)
 
     summarize_results(results, paths)
 
-
-if __name__ == '__main__':
-    main()
