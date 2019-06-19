@@ -33,7 +33,7 @@ def generate_paths_table(experiments: Path, jsons: Path,
         'jsons':       jsons
     }
 
-    paths['experiment'].mkdir(parents=True)
+    paths['experiments'].mkdir(parents=True)
 
     return paths
 
