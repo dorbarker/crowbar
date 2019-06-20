@@ -17,12 +17,27 @@ def crossvalidate(n: int, trunc_prob: float, miss_prob: float,
 
     paths = generate_paths_table(experiments, json_dir, alleles)
 
+    record_parameters(n, trunc_prob, miss_prob, seed, paths)
+
     divide_jsons(n, paths, seed)
 
     generate_models(paths, cores)
 
     run_experiments(paths, trunc_prob, miss_prob, cores)
 
+
+def record_parameters(n: int, trunc_prob: float, miss_prob: float,
+                      seed: Optional[int], paths: PathTable):
+
+    values = [f'n: {n}',
+              f'truncation probability: {trunc_prob}',
+              f'missing probability: {miss_prob}',
+              f'random seed: {seed}']
+
+    param_file = paths['experiments'] / 'parameters.txt'
+
+    with param_file.open('w') as o:
+        o.write('\n'.join(values))
 
 def generate_paths_table(experiments: Path, jsons: Path,
                          alleles: Path) -> PathTable:
@@ -100,9 +115,13 @@ def generate_models(paths: PathTable, cores: int) -> None:
     :param cores: The number of CPU cores to use for generating each model
     """
 
-    for experiment in paths['experiments'].glob('*/'):
+    experiment_directories = (p for p
+                              in paths['experiments'].glob('*/')
+                              if p.is_dir())
 
-        training_calls = experiment / 'training_calls'
+    for experiment in experiment_directories:
+
+        training_calls = experiment / 'training_calls.csv'
 
         # TODO consider changing subprocess.run to a proper fsac module import
         tabulate_training_calls = ('fsac', 'tabulate',
