@@ -151,9 +151,9 @@ def run_experiments(paths: PathTable, trunc_prob: float, miss_prob: float,
 
     for experiment in paths['experiments'].glob('*/'):
 
-        simulate_recovery.simulate_recovery(experiment / 'results',
-                                            experiment / 'test',
-                                            experiment / 'model',
-                                            trunc_prob,
-                                            miss_prob,
-                                            cores)
+        simulate_recovery.simulate(experiment / 'results',
+                                   experiment / 'test',
+                                   experiment / 'model',
+                                   trunc_prob,
+                                   miss_prob,
+                                   cores)
