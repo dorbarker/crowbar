@@ -262,8 +262,8 @@ def create_path_table(parent: Path, test_jsons: Path, model: Path) -> PathTable:
     return paths
 
 
-def simulate_recovery(outdir: Path, test_jsons: Path, model: Path,
-                      trunc_prob: float, miss_prob: float, cores: int):
+def simulate(outdir: Path, test_jsons: Path, model: Path,
+             trunc_prob: float, miss_prob: float, cores: int):
 
     paths = create_path_table(outdir, test_jsons, model)
 

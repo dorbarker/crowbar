@@ -7,7 +7,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from .simulate_recovery import simulate_recovery
+from .simulate_recovery import simulate
 from .crossvalidate import crossvalidate
 
 
@@ -136,8 +136,8 @@ def arguments():
 def single_simulation(args):
     """Simulates recovery on a single pair of training and test sets."""
 
-    simulate_recovery(args.outdir, args.test_jsons, args.model,
-                      args.trunc_prob, args.miss_prob, args.cores)
+    simulate(args.outdir, args.test_jsons, args.model,
+             args.trunc_prob, args.miss_prob, args.cores)
 
 
 def crossval(args):
