@@ -2,7 +2,7 @@ import math
 import itertools
 import random
 from pathlib import Path
-from typing import Optional
+from typing import Iterator, Optional
 import subprocess
 
 from .simulate_recovery import PathTable
@@ -115,9 +115,7 @@ def generate_models(paths: PathTable, cores: int) -> None:
     :param cores: The number of CPU cores to use for generating each model
     """
 
-    experiment_directories = (p for p
-                              in paths['experiments'].glob('*/')
-                              if p.is_dir())
+    experiment_directories = get_experiment_directories(paths)
 
     for experiment in experiment_directories:
 
@@ -149,7 +147,9 @@ def run_experiments(paths: PathTable, trunc_prob: float, miss_prob: float,
     :param cores: The number of CPU cores to use for generating each model
     """
 
-    for experiment in paths['experiments'].glob('*/'):
+    experiment_directories = get_experiment_directories(paths)
+
+    for experiment in experiment_directories:
 
         simulate_recovery.simulate(experiment / 'results',
                                    experiment / 'test',
@@ -157,3 +157,12 @@ def run_experiments(paths: PathTable, trunc_prob: float, miss_prob: float,
                                    trunc_prob,
                                    miss_prob,
                                    cores)
+
+def get_experiment_directories(paths: PathTable) -> Iterator[Path]:
+
+
+    experiment_directories = (p for p
+                              in paths['experiments'].glob('*')
+                              if p.is_dir())
+
+    return experiment_directories
