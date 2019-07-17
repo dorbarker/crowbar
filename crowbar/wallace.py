@@ -5,12 +5,13 @@ from typing import Union
 
 mismatch_matrix = collections.namedtuple('mismatch_matrix',
                                          ['a', 'b', 'c', 'd', 'n'])
+import warnings
+warnings.simplefilter('error')
+np.seterr(all='raise')
 
+def contingency_table( partition_a, partition_b) -> pd.DataFrame:
 
-def contingency_table(calls: pd.DataFrame,
-                      partition_a: str, partition_b: str) -> pd.DataFrame:
-
-    ct = pd.crosstab(calls[partition_a], calls[partition_b])
+    ct = pd.crosstab(partition_a, partition_b)
 
     return ct
 
@@ -39,7 +40,7 @@ def mismatch(ct: pd.DataFrame):
 def simpsons(classifications: pd.Series) -> float:
 
     def n_i(i) -> int:
-        return sum(classifications == i)
+        return np.equal(classifications, i).sum()
 
     n = len(classifications)
     s = set(classifications)
@@ -52,20 +53,23 @@ def wallace(mismatches) -> float:
     return mismatches.a / (mismatches.a + mismatches.b)
 
 
-def adj_wallace(partition_a: str, partition_b: str,
-                calls: pd.DataFrame) -> float:
+def adj_wallace(partition_a, partition_b) -> float:
 
-    ct = contingency_table(calls, partition_a, partition_b)
+    ct = contingency_table(partition_a, partition_b)
 
     mismatches = mismatch(ct)
 
-    sid_b = simpsons(calls[partition_b])
+    sid_b = simpsons(partition_b)
 
     wallace_a_b = wallace(mismatches)
 
     wallace_i = 1 - sid_b
 
-    awc = (wallace_a_b - wallace_i) / (1 - wallace_i)
+    try:
+        awc = (wallace_a_b - wallace_i) / (1 - wallace_i)
+    except FloatingPointError:
+        awc = 1.0
+
 
     return awc
 

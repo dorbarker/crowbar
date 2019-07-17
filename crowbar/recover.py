@@ -103,7 +103,7 @@ def flank_linkage(strain_profile: pd.Series, gene: str, model_path: Path,
     with triplet_path.open('r') as f:
         data = json.load(f)
 
-    possible = np.array(list(abundances.keys()))
+    possible = set(int(k) for k in abundances.keys() if k != '?') ^ {'?'}
 
     triplet_probabilities = {}
 
@@ -139,13 +139,13 @@ def flank_linkage(strain_profile: pd.Series, gene: str, model_path: Path,
 
             has_predictors = (best_calls == strain_best_predictor)     & \
                              (second_calls == strain_second_predictor) & \
-                             (np.isin(query_calls, possible))
+                             np.array([x in possible for x in query_calls])
 
             predictors_given_h = (has_predictors & is_h).sum() / is_h.sum()
 
-            triplet_probabilities[hypothesis] = predictors_given_h
+            triplet_probabilities[hypothesis] = predictors_given_h or abundances['?']
 
-    return triplet_probabilities
+    return {str(k): v for k,v in triplet_probabilities.items()}
 
 
 def partial_sequence_match(gene: str, model_path: Path, jsonpath: Path) -> Set[str]:
@@ -231,13 +231,13 @@ def load_genome(genome_calls_path: Path):
     for gene in data:
 
         if data[gene]['BlastResult'] is False:
-            genome_calls[gene] = '0'
+            genome_calls[gene] = 0
 
         elif data[gene]['IsContigTruncation']:
-            genome_calls[gene] = '-1'
+            genome_calls[gene] = -1
 
         else:
-            genome_calls[gene] = data[gene]['MarkerMatch']
+            genome_calls[gene] = int(data[gene]['MarkerMatch'])
 
     return pd.Series(genome_calls, name=genome_calls_path.stem, dtype=int)
 
@@ -247,7 +247,7 @@ def gather_evidence(strain_profile: pd.Series, json_path: Path,
 
     evidence = {}
 
-    missing = strain_profile.isin(pd.Series(['0', '-1'])) #< 1
+    missing = strain_profile.isin(pd.Series([0, -1]))
 
     missing_genes = strain_profile[missing].index
 

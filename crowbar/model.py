@@ -1,4 +1,5 @@
 import argparse
+import array
 import shutil
 import collections
 import functools
@@ -48,18 +49,21 @@ def generate_copartitioning_triplets(calls: pd.DataFrame, cores: int) -> Triplet
     :param calls:   DataFrame containing allele calls
     :return:        Dictionary of type Triplets
     """
-
+    import sys
     wallaces = {}
 
-    geneAs, geneBs = zip(*itertools.permutations(calls.columns, r=2))
+    namesA, namesB = zip(*itertools.permutations(calls.columns, r=2))
+    valuesA, valuesB = make_mem_efficient_gene_arrays(calls)
 
-    adj_wallace = functools.partial(wallace.adj_wallace, calls=calls)
+    print(sys.getsizeof(valuesA), sys.getsizeof(valuesB))
+
+    chunksize = int((len(calls.columns) ** 2) / (cores * 1))
 
     with ProcessPoolExecutor(max_workers=cores) as ppe:
 
-        results = ppe.map(adj_wallace, geneAs, geneBs, chunksize=100)
+        results = ppe.map(wallace.adj_wallace, valuesA, valuesB, chunksize=chunksize)
 
-    for geneA, geneB, adj_wallace_value in zip(geneAs, geneBs, results):
+    for geneA, geneB, adj_wallace_value in zip(namesA, namesB, results):
 
         try:
             wallaces[geneA][geneB] = adj_wallace_value
@@ -78,6 +82,20 @@ def generate_copartitioning_triplets(calls: pd.DataFrame, cores: int) -> Triplet
         triplets[geneA] = {'best': best, 'second': second}
 
     return triplets
+
+
+def make_mem_efficient_gene_arrays(calls: pd.DataFrame):
+
+    import multiprocessing
+    #i_array = functools.partial(array.array, 'i')
+    i_array = functools.partial(multiprocessing.Array, 'i')
+    gene_numpy_arrays = calls.T.to_numpy()
+
+    gene_pairs = itertools.permutations(gene_numpy_arrays, r=2)
+
+    #gene_array_pairs = [[i_array(x) for x in pair] for pair in gene_pairs]
+    gene_array_pairs = gene_pairs
+    return zip(*gene_array_pairs)
 
 
 def save_calls(calls: pd.DataFrame, model_path: Path) -> None:
