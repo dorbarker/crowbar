@@ -5,6 +5,9 @@ from typing import Union
 
 mismatch_matrix = collections.namedtuple('mismatch_matrix',
                                          ['a', 'b', 'c', 'd', 'n'])
+
+wallace_values = collections.namedtuple('wallace_values', ['a_b', 'b_a'])
+
 import warnings
 warnings.simplefilter('error')
 np.seterr(all='raise')
@@ -72,4 +75,12 @@ def adj_wallace(partition_a, partition_b) -> float:
 
 
     return awc
+
+def bidirectional_adj_wallace(partition_a, partition_b):
+
+    awc_a_b = adj_wallace(partition_a, partition_b)
+
+    awc_b_a = adj_wallace(partition_b, partition_a)
+
+    return wallace_values(awc_a_b, awc_b_a)
 

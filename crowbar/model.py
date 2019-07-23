@@ -1,10 +1,10 @@
 import argparse
-import array
 import shutil
 import collections
 import functools
 import itertools
 import json
+import math
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import Dict, Tuple
@@ -49,27 +49,31 @@ def generate_copartitioning_triplets(calls: pd.DataFrame, cores: int) -> Triplet
     :param calls:   DataFrame containing allele calls
     :return:        Dictionary of type Triplets
     """
-    import sys
+
     wallaces = {}
 
-    namesA, namesB = zip(*itertools.permutations(calls.columns, r=2))
-    valuesA, valuesB = make_mem_efficient_gene_arrays(calls)
+    namesA, namesB, valuesA, valuesB = make_mem_efficient_gene_arrays(calls)
 
-    print(sys.getsizeof(valuesA), sys.getsizeof(valuesB))
-
-    chunksize = int((len(calls.columns) ** 2) / (cores * 1))
+    chunksize = math.ceil((len(calls.columns) ** 2) / (cores))
 
     with ProcessPoolExecutor(max_workers=cores) as ppe:
 
-        results = ppe.map(wallace.adj_wallace, valuesA, valuesB, chunksize=chunksize)
+        results = ppe.map(wallace.bidirectional_adj_wallace, valuesA, valuesB,
+                          chunksize=chunksize)
 
     for geneA, geneB, adj_wallace_value in zip(namesA, namesB, results):
 
         try:
-            wallaces[geneA][geneB] = adj_wallace_value
+            wallaces[geneA][geneB] = adj_wallace_value.a_b
 
         except KeyError:
-            wallaces[geneA] = {geneB: adj_wallace_value}
+            wallaces[geneA] = {geneB: adj_wallace_value.a_b}
+
+        try:
+            wallaces[geneB][geneA] = adj_wallace_value.b_a
+
+        except KeyError:
+            wallaces[geneB] = {geneA: adj_wallace_value.b_a}
 
     triplets = {}
 
@@ -86,16 +90,13 @@ def generate_copartitioning_triplets(calls: pd.DataFrame, cores: int) -> Triplet
 
 def make_mem_efficient_gene_arrays(calls: pd.DataFrame):
 
-    import multiprocessing
-    #i_array = functools.partial(array.array, 'i')
-    i_array = functools.partial(multiprocessing.Array, 'i')
-    gene_numpy_arrays = calls.T.to_numpy()
+    names, values = zip(*calls.items())
 
-    gene_pairs = itertools.permutations(gene_numpy_arrays, r=2)
+    namesA, namesB = zip(*itertools.combinations(names, r=2))
 
-    #gene_array_pairs = [[i_array(x) for x in pair] for pair in gene_pairs]
-    gene_array_pairs = gene_pairs
-    return zip(*gene_array_pairs)
+    valuesA, valuesB = zip(*itertools.combinations(values, r=2))
+
+    return namesA, namesB, valuesA, valuesB
 
 
 def save_calls(calls: pd.DataFrame, model_path: Path) -> None:
