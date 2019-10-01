@@ -1,8 +1,11 @@
 import argparse
+import logging
 import sys
 from pathlib import Path
 
 from . import __version__
+from . import verbose_help
+
 from .recover import recover_genome
 from .model import load_calls, build_model
 
@@ -38,6 +41,10 @@ def arguments():
                          required=True,
                          help='Path to recovery model')
 
+    recover.add_argument('-V', '--verbose',
+                         action='store_true',
+                         help=verbose_help)
+
     ### Model Building
     model_help = 'Build a recovery model from allele call data'
 
@@ -63,6 +70,10 @@ def arguments():
                              type=int,
                              default=1,
                              help='Number of CPU cores to use [1]')
+
+    build_model.add_argument('-V', '--verbose',
+                             action='store_true',
+                             help=verbose_help)
 
 
     args = parser.parse_args()
@@ -90,8 +101,16 @@ def main():
 
     args = arguments()
 
+    logging.basicConfig(datefmt='%Y-%m-%d %H:%M',
+                        format='%(asctime)s - %(levelname)s: %(message)s',
+                        stream=sys.stderr,
+                        level=logging.INFO if args.verbose else logging.ERROR)
+
+    logging.info("Running %s", args.func.__name__)
+
     args.func(args)
 
+    logging.info("%s complete", args.func.__name__)
 
 if __name__ == '__main__':
     main()

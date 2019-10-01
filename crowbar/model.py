@@ -4,7 +4,9 @@ import collections
 import functools
 import itertools
 import json
+import logging
 import math
+import sys
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import Dict, Tuple
@@ -17,6 +19,8 @@ Triplets = Dict[str, Dict[str, Tuple[str, float]]]
 
 def build_model(calls: pd.DataFrame, alleles_dir: Path,
                 model_path: Path, cores: int):
+
+    logging.info('Creating model at `%s`', model_path)
 
     model_path.mkdir(exist_ok=True, parents=True)
 
@@ -33,6 +37,8 @@ def build_model(calls: pd.DataFrame, alleles_dir: Path,
 
 
 def load_calls(calls_path: Path) -> pd.DataFrame:
+
+    logging.info('Loading allele calls from `%s`', calls_path)
 
     raw_calls = pd.read_csv(calls_path, sep=',', index_col=0)
 
@@ -103,14 +109,15 @@ def save_calls(calls: pd.DataFrame, model_path: Path) -> None:
 
     calls_path = model_path / 'calls.csv'
 
+    logging.info('Save calls to %s', calls_path)
     calls.to_csv(calls_path)
 
 
 def save_known_alleles(alleles_dir: Path, model_path: Path) -> None:
 
     if not alleles_dir.is_dir():
-        msg = f"{alleles_dir} is not a directory."
-        raise NotADirectoryError(msg)
+        logging.error('%s is not a directory', alleles_dir)
+        sys.exit(1)
 
     model_alleles_dir = model_path / 'alleles'
     model_alleles_dir.mkdir(parents=True)
@@ -119,6 +126,7 @@ def save_known_alleles(alleles_dir: Path, model_path: Path) -> None:
     for fasta in alleles_dir.glob('*'):
         if fasta.is_file():
             dst = model_alleles_dir / fasta.name
+            logging.info('Copying `%s` to `%s`', fasta, dst)
             shutil.copy(fasta, dst)
 
 

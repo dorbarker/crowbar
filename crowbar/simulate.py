@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 from . import __version__
+from . import verbose_help
 from .simulate_recovery import simulate
 from .crossvalidate import crossvalidate
 
@@ -31,10 +32,6 @@ def arguments():
                         version=f'{parser.prog} {__version__}')
 
     parser.set_defaults(func=None)
-
-    verbose_help = """In addition to warning messages,
-                      also write informational
-                      messages to stderr"""
 
     subparsers = parser.add_subparsers(title='Commands')
 
