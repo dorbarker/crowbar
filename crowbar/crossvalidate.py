@@ -1,9 +1,11 @@
+import logging
 import math
 import itertools
 import random
 from pathlib import Path
 from typing import Iterator, Optional
 import subprocess
+import sys
 
 from .simulate_recovery import PathTable
 
@@ -48,7 +50,12 @@ def generate_paths_table(experiments: Path, jsons: Path,
         'jsons':       jsons
     }
 
-    paths['experiments'].mkdir(parents=True)
+    try:
+        paths['experiments'].mkdir(parents=True)
+
+    except FileExistsError:
+        logging.error('Output path `%s` already exists', paths['experiments'])
+        sys.exit(1)
 
     return paths
 
@@ -67,6 +74,7 @@ def divide_jsons(n: int, paths: PathTable, seed: Optional[int] = None) -> None:
     """
 
     random.seed(seed)
+    logging.info('Using random seed %s', seed)
 
     jsons = list(paths['jsons'].glob('*.json'))
 
@@ -104,6 +112,7 @@ def divide_jsons(n: int, paths: PathTable, seed: Optional[int] = None) -> None:
 
             out_json.symlink_to(j.resolve())
 
+        logging.info('Created experiment group `%s`', experiment)
 
 def generate_models(paths: PathTable, cores: int) -> None:
     """For each experiment, generate a model from the training data.

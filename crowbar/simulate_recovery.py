@@ -48,6 +48,7 @@ def truncate(strain: str, gene: str, paths: PathTable) -> str:
     """
 
     jsonpath = paths['test'].joinpath(strain).with_suffix('.json')
+    logging.info('Reading JSON data from `%s`', jsonpath)
 
     with jsonpath.open('r') as json_obj:
         data = json.load(json_obj)
@@ -115,8 +116,8 @@ def _simulate_recovery(genome_path: Path, trunc_prob: float, miss_prob: float,
     :return:            Dict relating each strain name to its modified profile
     """
 
-
     strain_name = genome_path.stem
+    logging.info('Simulating allele recovery for %s', genome_path)
 
     strain_profile = recover.load_genome(genome_path)
 
@@ -233,6 +234,8 @@ def compare_to_known(strain_profiles: Dict[str, pd.Series],
 
 
 def summarize_results(results: SimulationResults, paths: PathTable):
+
+    logging.info('Writing results summary to %s', paths['report'])
 
     df_results = pd.DataFrame(results)
 
