@@ -11,8 +11,8 @@ def arguments():
     parser = argparse.ArgumentParser()
 
     parser.add_argument('-v', '--version',
-                        action='store_true',
-                        help='Print version and exit')
+                        action='version',
+                        version=f'{parser.prog} {__version__}')
 
     parser.set_defaults(func=None)
     subparsers = parser.add_subparsers(title='Commands')
@@ -66,10 +66,6 @@ def arguments():
 
 
     args = parser.parse_args()
-
-    if args.version:
-        print('crowbar', __version__)
-        sys.exit(0)
 
     if args.func is None:
         parser.print_help()
