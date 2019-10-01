@@ -1,4 +1,5 @@
 import sys
+import logging
 import os
 import argparse
 import json
@@ -256,8 +257,14 @@ def create_path_table(parent: Path, test_jsons: Path, model: Path) -> PathTable:
         'report':       parent / 'report.txt'
     }
 
-    paths['simulated'].mkdir(parents=True)
-    paths['recovered'].mkdir()
+    try:
+
+        paths['simulated'].mkdir(parents=True)
+        paths['recovered'].mkdir()
+
+    except FileExistsError:
+        logging.error("Output path `%s` already exists", parent.resolve())
+        sys.exit(1)
 
     return paths
 

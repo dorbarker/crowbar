@@ -4,9 +4,11 @@ set or via an n-fold crossvalidation.
 """
 
 import argparse
+import logging
 import sys
 from pathlib import Path
 
+from . import __version__
 from .simulate_recovery import simulate
 from .crossvalidate import crossvalidate
 
@@ -24,7 +26,16 @@ def arguments():
 
     parser = argparse.ArgumentParser()
 
+    parser.add_argument('-v', '--version',
+                        action='version',
+                        version=f'{parser.prog} {__version__}')
+
     parser.set_defaults(func=None)
+
+    verbose_help = """In addition to warning messages,
+                      also write informational
+                      messages to stderr"""
+
     subparsers = parser.add_subparsers(title='Commands')
 
     simulate_help = '''Simulate recovery by adding synthetic errors to a set of
@@ -69,6 +80,9 @@ def arguments():
                           default=1,
                           help='Number of CPU cores to use [1]')
 
+    simulate.add_argument('-V', '--verbose',
+                          action='store_true',
+                          help=verbose_help)
 
     xval_help = '''Perform a cross-validation by simulating recovery in
                    replicate. A single pool of known-good genomes are used and
@@ -125,6 +139,10 @@ def arguments():
                       required=False,
                       help='Number of CPU cores to use [1]')
 
+    xval.add_argument('-V', '--verbose',
+                      action='store_true',
+                      help=verbose_help)
+
     args = parser.parse_args()
     if args.func is None:
         parser.print_help()
@@ -157,7 +175,14 @@ def main():
 
     args = arguments()
 
+    logging.basicConfig(datefmt='%Y-%m-%d %H:%M',
+                        format='%(asctime)s - %(levelname)s: %(message)s',
+                        stream=sys.stderr,
+                        level=logging.INFO if args.verbose else logging.ERROR)
+
+    logging.info("Running %s", args.func.__name__)
     args.func(args)
 
 if __name__ == '__main__':
+
     main()
