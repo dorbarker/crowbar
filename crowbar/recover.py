@@ -5,6 +5,8 @@ import re
 from pathlib import Path
 from typing import Dict, List, Set, Tuple, Union
 
+import warnings
+warnings.simplefilter("ignore")
 # Third-party imports
 import pandas as pd
 import numpy as np
@@ -27,16 +29,24 @@ def nearest_neighbour(strain_profile: pd.Series, gene: str,
         distance of non-missing loci.
         """
 
+
         missing = [0, -1]
         s1 = ~strain1.isin(missing)
         s2 = ~strain2.isin(missing)
-
         shared = [a and b for a, b in zip(s1, s2)]
 
         identical_calls = [x == y for x, y
                            in zip(strain1[shared], strain2[shared])]
 
         percentage_shared = sum(identical_calls) / sum(shared)
+
+
+        if percentage_shared != 0:
+            print(f'strain1: {strain1}',
+                  f'strain2: {strain2}',
+                  f'shared: {shared}',
+                  f'identical_calls: {identical_calls}',
+                  sep = '\n')
 
         return percentage_shared
 
@@ -54,6 +64,7 @@ def nearest_neighbour(strain_profile: pd.Series, gene: str,
     neighbouring_alleles = [(model_calls.loc[row_strain, gene], similarity)
                             for row_strain, similarity in neighbours]
 
+    neighbouring_alleles = [(str(x), y) for x, y in neighbouring_alleles]
     return neighbouring_alleles
 
 
@@ -61,8 +72,8 @@ def neighbour_allele_probabilities(neighbouring_alleles: NeighbourAlleles,
                                    abundances: AlleleProb) -> AlleleProb:
 
     neighbours, similarities = zip(*neighbouring_alleles)
+    print('neighbours', repr(neighbours))
     similarity, *_ = similarities
-
     allele_counts = collections.Counter(neighbours)
 
     combined_probs = {}
@@ -153,20 +164,27 @@ def partial_sequence_match(gene: str, model_path: Path, jsonpath: Path) -> Set[s
 
     genes = model_path / 'alleles'
 
+    glob_pattern = '*{}.*'.format(gene)
+    gene_file, *_ = genes.glob(glob_pattern)
+
     with jsonpath.open('r') as json_obj:
         data = json.load(json_obj)
 
-    fragment = data[gene]['SubjAln']
+    try:  # diagnostic
+        fragment = data[gene]['SubjAln']
 
-    fragment_pattern = re.compile('(^{seq})|({seq}$)'.format(seq=fragment))
+        fragment_pattern = re.compile('(^{seq})|({seq}$)'.format(seq=fragment))
 
-    glob_pattern = '*{}.f*'.format(gene)
-    gene_file, *_ = genes.glob(glob_pattern)
 
-    with gene_file.open('r') as fasta:
+        with gene_file.open('r') as fasta:
 
-        matches = set(rec.id for rec in SeqIO.parse(fasta, 'fasta')
-                      if re.search(fragment_pattern, str(rec.seq)))
+            matches = set(rec.id for rec in SeqIO.parse(fasta, 'fasta')
+                          if re.search(fragment_pattern, str(rec.seq)))
+
+    except KeyError:
+        with gene_file.open('r') as fasta:
+
+            matches = set(rec.id for rec in SeqIO.parse(fasta, 'fasta'))
 
     return matches
 
@@ -199,7 +217,7 @@ def allele_abundances(gene: str, partial_matches: Set[str],
 def bayes(abundances: AlleleProb, triplets: AlleleProb,
           neighbours: AlleleProb) -> AlleleProb:
 
-    def bayes_theorem(h: Union[str, int]) -> float:
+    def bayes_theorem(h: str) -> float:
         """Implementation of Bayes' Theorem in which the hypothesis being
         tested (h) is a given allele, and the lines of evidence are
         linkage disequilibrium between genes, and the similarity of the strain
@@ -212,14 +230,24 @@ def bayes(abundances: AlleleProb, triplets: AlleleProb,
 
         e_h = triplet_probability * neighbour_probability
 
+        if e_h == 0:
+            print("neighbour:", neighbours[h], sep = '\t')
+            print("triplets :", triplets[h], sep ='\t')
         return e_h
+
 
     likelihoods = {h: bayes_theorem(h) for h in abundances}
 
     e = sum(likelihoods.values())
 
     return {h: ((likelihoods[h] * abundances[h]) / e) for h in abundances}
-
+    out = {}
+    for h in abundances:
+        try:
+            out[h] = (likelihoods[h] * abundances[h]) / e
+        except:
+            print(f"h: {h}\ne: {e}\nlikelihoods[h]: {likelihoods[h]}\nabundances[h]: {abundances[h]}")
+            raise
 
 def load_genome(genome_calls_path: Path):
 
@@ -236,6 +264,9 @@ def load_genome(genome_calls_path: Path):
         elif data[gene]['IsContigTruncation']:
             genome_calls[gene] = -1
 
+        elif data[gene]['MarkerMatch'] is None:
+            genome_calls[gene] = -2
+
         else:
             genome_calls[gene] = int(data[gene]['MarkerMatch'])
 
@@ -249,7 +280,7 @@ def gather_evidence(strain_profile: pd.Series, json_path: Path,
 
     missing = strain_profile.isin(pd.Series([0, -1]))
 
-    missing_genes = strain_profile[missing].index
+    missing_genes = strain_profile[missing].index.astype(str)
 
     for gene in missing_genes:
 
@@ -285,6 +316,7 @@ def recover(strain_profile: pd.Series,
                               evidence[gene]['triplets'],
                               evidence[gene]['neighbours'])
 
+        print("PROBABILITIES:", list(probabilities.items()))
         most_probable = max(probabilities, key=lambda x: probabilities[x])
 
         repaired_calls[gene] = most_probable

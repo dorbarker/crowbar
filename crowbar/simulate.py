@@ -5,6 +5,7 @@ set or via an n-fold crossvalidation.
 
 import argparse
 import logging
+import random
 import sys
 from pathlib import Path
 
@@ -99,7 +100,7 @@ def arguments():
     xval.add_argument('--seed',
                       type=int,
                       required=False,
-                      default=None,
+                      default=random.randrange(sys.maxsize),
                       help='Seed to initialize the PRNG')
 
     xval.add_argument('--truncation-probability',

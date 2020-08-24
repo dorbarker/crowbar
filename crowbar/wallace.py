@@ -8,6 +8,10 @@ mismatch_matrix = collections.namedtuple('mismatch_matrix',
 
 wallace_values = collections.namedtuple('wallace_values', ['a_b', 'b_a'])
 
+import warnings
+warnings.simplefilter('error')
+np.seterr(all='raise')
+
 def contingency_table( partition_a, partition_b) -> pd.DataFrame:
 
     ct = pd.crosstab(partition_a, partition_b)
@@ -43,7 +47,8 @@ def simpsons(classifications: pd.Series) -> float:
 
     n = len(classifications)
     s = set(classifications)
-
+    print(f"n: {n} s: {s}")
+    print(classifications)
     return 1 - (sum(n_i(i) * (n_i(i) - 1) for i in s) / (n * (n - 1)))
 
 

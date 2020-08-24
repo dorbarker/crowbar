@@ -92,9 +92,7 @@ def recover_alleles(args):
 
 def train_model(args):
 
-    calls = load_calls(args.calls)
-
-    build_model(calls, args.alleles_dir, args.output, args.cores)
+    build_model(args.calls, args.alleles_dir, args.output, args.cores)
 
 
 def main():

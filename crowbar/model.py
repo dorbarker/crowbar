@@ -17,10 +17,12 @@ Abundance = Dict[str, Dict[str, int]]
 Triplets = Dict[str, Dict[str, Tuple[str, float]]]
 
 
-def build_model(calls: pd.DataFrame, alleles_dir: Path,
+def build_model(calls_path: Path, alleles_dir: Path,
                 model_path: Path, cores: int):
 
     logging.info('Creating model at `%s`', model_path)
+
+    calls = load_calls(calls_path)
 
     model_path.mkdir(exist_ok=True, parents=True)
 

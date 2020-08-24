@@ -138,9 +138,10 @@ def generate_models(paths: PathTable, cores: int) -> None:
 
         subprocess.run(tabulate_training_calls, check=True)
 
-        calls = model.load_calls(training_calls)
-
-        model.build_model(calls, paths['alleles'], experiment / 'model', cores)
+        model.build_model(calls_path=training_calls,
+                          alleles_dir=paths['alleles'],
+                          model_path=experiment / 'model',
+                          cores=cores)
 
 
 def run_experiments(paths: PathTable, trunc_prob: float, miss_prob: float,
@@ -159,6 +160,8 @@ def run_experiments(paths: PathTable, trunc_prob: float, miss_prob: float,
     experiment_directories = get_experiment_directories(paths)
 
     for experiment in experiment_directories:
+
+        logging.info('Running experiment %s', experiment)
 
         simulate_recovery.simulate(experiment / 'results',
                                    experiment / 'test',
